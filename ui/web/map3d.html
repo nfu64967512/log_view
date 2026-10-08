@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 地圖</title>
+<link rel="stylesheet" href="map3d.css">
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+<div id="viewer"></div>
+
+<div id="hud" class="panel hidden" aria-live="off"></div>
+<div id="legend" class="panel hidden"></div>
+<div id="hint" class="hidden">點擊軌跡跳到該時刻 · 左鍵拖曳旋轉 · 右鍵拖曳或滾輪縮放 · 中鍵拖曳傾斜</div>
+
+<div id="overlay">
+  <div class="box">
+    <div class="spinner" id="ov-spin"></div>
+    <h2 id="ov-title">正在載入 3D 地圖…</h2>
+    <p id="ov-msg">從網路下載 CesiumJS 與衛星底圖</p>
+  </div>
+</div>
+
+<script src="map3d.js"></script>
+</body>
+</html>

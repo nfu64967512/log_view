@@ -1,0 +1,112 @@
+/* 3D 地圖:深色介面,配色與 ui/theme.py 一致 */
+:root {
+  --surface: #1a1a19;
+  --plane: #0d0d0d;
+  --panel: #232322;
+  --ink: #ffffff;
+  --ink2: #c3c2b7;
+  --muted: #898781;
+  --border: #3a3a37;
+  --font: "Microsoft JhengHei UI", "Microsoft JhengHei", "Segoe UI", sans-serif;
+  --mono: Consolas, "Cascadia Mono", monospace;
+}
+
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+  background: var(--surface); color: var(--ink2); font-family: var(--font);
+  -webkit-user-select: none; user-select: none;
+}
+#viewer { position: absolute; inset: 0; }
+.hidden { display: none !important; }
+
+/* Cesium 預設元件:只留版權列,改成深色小字 */
+.cesium-viewer-bottom {
+  left: 8px !important; right: auto !important; bottom: 4px !important; padding: 1px 6px !important;
+  background: rgba(26, 26, 25, 0.72); border-radius: 5px;
+}
+.cesium-widget-credits { color: var(--muted) !important; font-size: 10px !important; opacity: 0.85; }
+.cesium-widget-credits a, .cesium-credit-text a { color: var(--ink2) !important; }
+.cesium-credit-logoContainer img { opacity: 0.65; height: 20px; }
+.cesium-credit-lightbox-overlay { background: rgba(0, 0, 0, 0.6) !important; }
+.cesium-credit-lightbox { background: var(--panel) !important; color: var(--ink2) !important;
+                          border: 1px solid var(--border) !important; }
+.cesium-widget canvas { outline: none; }
+
+.panel {
+  position: absolute; z-index: 5;
+  background: rgba(26, 26, 25, 0.86);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  padding: 9px 12px; font-size: 12.5px; line-height: 1.55;
+  pointer-events: none;
+}
+
+/* 左上:即時讀數 */
+#hud { top: 10px; left: 10px; min-width: 250px; }
+#hud .time { color: var(--ink); font-family: var(--mono); font-size: 19px; line-height: 1.25; }
+#hud .time .rel { color: var(--muted); font-size: 11.5px; margin-left: 6px; font-family: var(--font); }
+#hud .state { margin: 3px 0 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#hud .tag {
+  border-radius: 4px; padding: 0 6px; font-size: 11.5px; line-height: 18px;
+  border: 1px solid var(--border); color: var(--ink2);
+}
+#hud .tag.armed { color: #ffffff; background: #0c6e0c; border-color: #0ca30c; }
+#hud .grid { display: grid; grid-template-columns: auto auto; column-gap: 12px; row-gap: 1px; }
+#hud .grid span { color: var(--muted); }
+#hud .grid b { color: var(--ink); font-weight: 600; font-family: var(--mono); font-size: 12.5px;
+               text-align: right; white-space: nowrap; }
+#hud .grid b.dim { color: var(--muted); font-weight: 400; font-family: var(--font); }
+#hud .foot { margin-top: 5px; color: var(--muted); font-size: 11px; }
+
+.chip { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+        border: 1px solid rgba(255, 255, 255, 0.35); vertical-align: -1px; flex: none; }
+.mode-name { color: var(--ink); font-weight: 600; }
+
+/* 右上:圖例 */
+#legend { top: 10px; right: 10px; max-width: 250px; max-height: calc(100% - 70px); overflow: hidden; }
+#legend h4 { margin: 0 0 5px; color: var(--ink); font-size: 12.5px; font-weight: 600; }
+#legend .row { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+#legend .sep { height: 1px; background: var(--border); margin: 7px 0; }
+#legend .line { display: inline-block; width: 18px; height: 0; border-top: 3px solid; flex: none;
+                border-radius: 2px; }
+#legend .line.thin { border-top-width: 2px; }
+#legend .line.grad { border-top: none; height: 4px; }
+#legend .line.dark { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45); }
+#legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none;
+               border: 2px solid #ffffff; margin: 0 4px 0 3px; }
+#legend .ramp { height: 10px; border-radius: 3px; margin: 2px 0 2px; width: 200px;
+                border: 1px solid rgba(255, 255, 255, 0.15); }
+#legend .ramp-lab { display: flex; justify-content: space-between; color: var(--muted);
+                    font-family: var(--mono); font-size: 11px; }
+#legend .note { color: var(--muted); font-size: 11px; white-space: normal; line-height: 1.4; }
+
+/* 左下:操作提示 */
+#hint {
+  position: absolute; left: 10px; bottom: 34px; z-index: 6;
+  color: var(--muted); font-size: 11px; pointer-events: none;
+  background: rgba(26, 26, 25, 0.7); border-radius: 5px; padding: 2px 8px;
+}
+
+/* 全頁訊息(載入中 / 離線 / 無 WebGL) */
+#overlay {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface);
+}
+#overlay .box {
+  max-width: 460px; text-align: center; padding: 22px 28px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+}
+#overlay h2 { margin: 6px 0 8px; color: var(--ink); font-size: 16px; font-weight: 600; }
+#overlay p { margin: 0; color: var(--ink2); font-size: 13px; line-height: 1.6; white-space: pre-line; }
+#overlay.warn h2::before { content: "⚠ "; color: #fab219; }
+#overlay.empty { background: rgba(26, 26, 25, 0.0); pointer-events: none; }
+#overlay.empty .box { background: rgba(35, 35, 34, 0.9); }
+.spinner {
+  width: 26px; height: 26px; margin: 0 auto 4px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: #3987e5;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#ov-retry:focus { outline: none; }
+#ov-retry:hover { background: #3a3a37 !important; }

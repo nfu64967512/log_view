@@ -1,0 +1,5 @@
+numpy>=1.24
+matplotlib>=3.7
+pymavlink>=2.4.40
+PyQt6>=6.5
+PyQt6-WebEngine>=6.5
