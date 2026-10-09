@@ -144,6 +144,14 @@ def test_scene():
     check("姿態來源 = ATT(模擬附 LogIndex)" if ld.index is not None else "姿態來源 = 推估",
           sc["attitude"] == ("ATT" if ld.index is not None else "derived"), f"({sc['attitude']})")
     check("姿態序列長度一致", len(att["t"]) == len(att["roll"]) == len(att["pitch"]) == len(att["yaw"]))
+    ms = sc.get("mission")
+    check("場景含預定航點(CMD)", ms is not None and ms["source"] == "CMD" and len(ms["wps"]) >= 4
+          and all({"n", "lat", "lng", "u"} <= set(wp) for wp in ms["wps"]), f"({ms and len(ms['wps'])} 個)")
+    prog = (ms or {}).get("prog") or {}
+    check("預定航點含推估進度(變化點、索引在範圍內)",
+          len(prog.get("t", [])) == len(prog.get("k", [])) > 0
+          and all(-1 <= k <= len(ms["wps"]) for k in prog["k"]), f"({prog.get('k')})")
+    json.dumps(sc)
     check("載具 copter → 四旋翼模型", sc["vehicle"] == "copter" and sc["model"]["kind"] == "quad")
     check("模型為 data URI", sc["model"]["uri"].startswith("data:model/gltf-binary;base64,"))
     check("顏色取自 theme", sc["colors"]["ref"] == theme.C_REF and sc["colors"]["ramp"] == theme.SEQ_RAMP)
@@ -840,6 +848,30 @@ def visual(out_dir: str):
     cv = json.loads(_js(w, att_js) or "{}")
     check("HUD 姿態儀:有 ATT 時顯示且有畫內容", cv.get("vis") and cv.get("px", 0) > 0.5 * cv.get("tot", 1),
           f"({cv})")
+    # MAP-MISSION:預定航線(虛線 + 編號)畫出來、可用「預定航線」勾選開關
+    st = json.loads(_js(w, "JSON.stringify(app.status().mission)") or "null")
+    check("預定航線已建立(航點數 = 場景航點數)", st is not None and st["n"] >= 4 and st["show"], f"({st})")
+    w.set_time(f1[0] + 25.0)                       # 第一次飛行的 AUTO 期間:HUD 要有目標航點
+    _pump(300)
+    hud_auto = _js(w, "document.getElementById('hud').innerText") or ""
+    hl = json.loads(_js(w, "JSON.stringify([S.mission.points.get(S.mission.hl).outlineColor.toCssColorString(),"
+                           " S.mission.points.get(S.mission.hl).pixelSize,"
+                           " S.mission.points.get((S.mission.hl + 1) % S.mission.points.length).pixelSize])") or "[]")
+    check("目標航點:黃色外圈、放大;其餘維持原樣", hl == ["rgb(242,201,76)", 15, 9], f"({hl})")
+    _settle(w, 400)
+    _shot(w, out_dir, "01d_wp_target")
+    check("HUD 顯示目標航點(推估)", "目標航點" in hud_auto and "WP " in hud_auto and " m" in hud_auto,
+          f"({hud_auto.replace(chr(10), ' | ')[-70:]})")
+    w.set_time(f1[0] + 1.0)                        # 剛解鎖、還沒進 AUTO:不顯示
+    _pump(300)
+    hud_idle = _js(w, "document.getElementById('hud').innerText") or ""
+    check("不在 AUTO → HUD 沒有目標航點", "目標航點" not in hud_idle)
+    w.chk_mission.setChecked(False)
+    _pump(200)
+    off = json.loads(_js(w, "JSON.stringify(app.status().mission)") or "null")
+    check("取消勾選 → 預定航線隱藏", off is not None and off["show"] is False, f"({off})")
+    w.chk_mission.setChecked(True)
+    _pump(200)
     _settle(w, 300)
     _shot(w, out_dir, "01b_outside_window")
 

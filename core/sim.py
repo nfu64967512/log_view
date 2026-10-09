@@ -525,6 +525,24 @@ def _attach_index(logdata: LogData, t: np.ndarray, enu: np.ndarray, story: dict,
     tables["MSG"] = {"t": np.array([m[0] for m in msgs]),
                      "Message": np.array([m[1] for m in msgs], dtype=str)}
 
+    # --- CMD:預定任務(第一次飛行的每個轉角一個航點 + RTL),任務啟動時一次傾印 ---
+    f0 = story["flights"][0]
+    tw = np.array([f0["t_cruise"] + (k + 1) * f0["leg_s"] for k in range(f0["legs"])])
+    w_enu = np.column_stack([at(enu[:, i], tw) for i in range(3)])
+    w_lat, w_lng, _ = frames.enu_to_geodetic(w_enu, ORIGIN)
+    nw = tw.size
+    n_cmd = nw + 2
+    tables["CMD"] = {
+        "t": tb + 3.0 + 0.001 * np.arange(n_cmd),
+        "CTot": np.full(n_cmd, n_cmd, np.uint16), "CNum": np.arange(n_cmd, dtype=np.uint16),
+        "CId": np.array([16] + [16] * nw + [20], dtype=np.uint16),
+        "Prm1": np.zeros(n_cmd), "Prm2": np.zeros(n_cmd), "Prm3": np.zeros(n_cmd),
+        "Prm4": np.zeros(n_cmd),
+        "Lat": np.concatenate([[0.0], w_lat, [0.0]]), "Lng": np.concatenate([[0.0], w_lng, [0.0]]),
+        "Alt": _f32(np.concatenate([[0.0], np.full(nw, np.round(np.median(w_enu[:, 2]))), [0.0]])),
+        "Frame": np.array([0] + [3] * nw + [0], dtype=np.uint8),
+    }
+
     # --- PARM:開機時一次寫出 ---
     k = len(SIM_PARAMS)
     tables["PARM"] = {"t": tb + 0.010 + 0.001 * np.arange(k),

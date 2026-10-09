@@ -35,7 +35,7 @@ const S = {
   scene: null, sceneKey: "",
   ref: null, est: null, att: null, err: null, modes: null,
   t: null,
-  opts: { base: "esri", color: "mode", showEst: true, follow: false, token: "" },
+  opts: { base: "esri", color: "mode", showEst: true, showMission: true, follow: false, token: "" },
   applied: { base: null, token: null },
   ion: { img: "", ter: "" },   // Cesium ion 影像 / 地形狀態:'' / loading / ok / fail
   ionMsg: null,                // 上次送出的 ion 狀態文字
@@ -43,6 +43,7 @@ const S = {
   fitKey: null,                // 新 log 的全覽要等 ion 地形的地面高取樣完再做一次(sceneKey)
   pendingViewAll: null,
   prim: { ref: null, est: null },
+  mission: null,               // 預定航線:{ line, points, labels }(buildMission)
   dyn: null,
   model: null, modelKey: null, modelReady: false,
   following: false,
@@ -626,7 +627,8 @@ function buildTracks() {
     if (S.prim[k]) { prims.remove(S.prim[k]); S.prim[k] = null; }
   }
   S.linePts = null;
-  if (!S.ref) { requestRender(); return; }
+  if (!S.ref) { clearMission(); requestRender(); return; }
+  buildMission();
   const mode = colorMode();
   try {
     if (S.est) {
@@ -640,6 +642,73 @@ function buildTracks() {
     reportError("建立軌跡失敗", e);
   }
   requestRender();
+}
+
+// 預定航線:CMD 航點的虛線 + 編號標記。S.ground 變動時隨 buildTracks 重建。
+function clearMission() {
+  if (!S.mission || !S.viewer) { S.mission = null; return; }
+  const prims = S.viewer.scene.primitives;
+  for (const k of ["line", "points", "labels"]) if (S.mission[k]) prims.remove(S.mission[k]);
+  S.mission = null;
+}
+
+function buildMission() {
+  clearMission();
+  const m = S.scene && S.scene.mission;
+  if (!S.viewer || !m || !m.wps.length) return;
+  const C = Cesium;
+  const prims = S.viewer.scene.primitives;
+  const col = C.Color.fromCssColorString(S.scene.colors.mission || "#00d1ff");
+  const pos = m.wps.map((w) => C.Cartesian3.fromDegrees(w.lng, w.lat, S.ground + w.u));
+  const line = prims.add(new C.PolylineCollection());
+  if (pos.length >= 2) {
+    line.add({ positions: pos, width: 2.2,
+               material: C.Material.fromType("PolylineDash", { color: col.withAlpha(0.95), dashLength: 14.0 }) });
+  }
+  const points = prims.add(new C.PointPrimitiveCollection());
+  const labels = prims.add(new C.LabelCollection());
+  for (let k = 0; k < pos.length; k++) {
+    points.add({ position: pos[k], pixelSize: 9, color: C.Color.fromCssColorString(S.scene.colors.surface || "#1a1a19"),
+                 outlineColor: col, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY });
+    labels.add({ position: pos[k], text: String(m.wps[k].n), font: "600 13px sans-serif",
+                 fillColor: col, outlineColor: C.Color.fromCssColorString("#0d0d0d"), outlineWidth: 3,
+                 style: C.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new C.Cartesian2(9, -9),
+                 horizontalOrigin: C.HorizontalOrigin.LEFT, verticalOrigin: C.VerticalOrigin.BOTTOM,
+                 disableDepthTestDistance: Number.POSITIVE_INFINITY });
+  }
+  S.mission = { line, points, labels };
+  setMissionShown();
+}
+
+// 目前飛往的航點(推估):prog 是 [時間, 索引] 變化點,取不晚於 rel 的最後一個;-1 = 不在 AUTO
+function progAt(rel) {
+  const p = S.scene && S.scene.mission && S.scene.mission.prog;
+  if (!p || !p.t.length || rel < p.t[0]) return -1;
+  return p.k[upper(p.t, rel) - 1];
+}
+
+function highlightWp(k) {
+  const m = S.mission;
+  if (!m || m.hl === k) return;
+  const C = Cesium, ink = C.Color.fromCssColorString(S.scene.colors.mission || "#00d1ff");
+  const old = m.hl;
+  m.hl = k;
+  for (const j of [old, k]) {
+    if (j === undefined || j < 0 || j >= m.points.length) continue;
+    const on = j === k;
+    const pt = m.points.get(j), lb = m.labels.get(j);
+    pt.pixelSize = on ? 15 : 9;                       // 目標航點:放大 + 黃色外圈(其餘為任務色外圈)
+    pt.outlineColor = on ? C.Color.fromCssColorString("#f2c94c") : ink;
+    pt.outlineWidth = on ? 3 : 2;
+    lb.fillColor = on ? C.Color.fromCssColorString("#f2c94c") : ink;
+  }
+  requestRender();
+}
+
+function setMissionShown() {
+  if (!S.mission) return;
+  const on = !!S.opts.showMission;
+  for (const k of ["line", "points", "labels"]) S.mission[k].show = on;
 }
 
 function buildDynamic() {
@@ -930,6 +999,24 @@ function renderHud(rel, r, a) {
   const er = errAt(rel);
   if (er.state === "ok") h += `<span>ATE 3D 誤差</span><b>${er.v.toFixed(2)} m</b>`;
   else h += `<span>ATE 3D 誤差</span><b class="dim">${{ none: "—(尚未計算)", out: "—(區間外)", gap: "—(無資料)" }[er.state]}</b>`;
+  const ms = S.scene.mission;
+  if (ms && ms.prog && S.mission) {
+    const k = progAt(rel), n = ms.wps.length;
+    highlightWp(k);
+    if (k >= 0) {
+      let txt;
+      if (k >= n) txt = "已全部到達";
+      else {
+        txt = `WP ${ms.wps[k].n} / ${ms.wps[n - 1].n}`;
+        if (r) {
+          const w = ms.wps[k], dn = (w.lat - r.lat) * 111320;
+          const de = (w.lng - r.lng) * 111320 * Math.cos(r.lat * Math.PI / 180), du = w.u - r.u;
+          txt += ` · 距 ${Math.hypot(dn, de, du).toFixed(0)} m`;
+        }
+      }
+      h += `<span>目標航點(推估)</span><b>${txt}</b>`;
+    }
+  }
   if (a && r) {
     const yaw = ((Math.round(a.yaw) % 360) + 360) % 360;      // 先取整再折回:不會顯示 360°
     if (S.scene.attitude === "derived") {
@@ -1040,6 +1127,10 @@ function renderLegend() {
     }
     if (S.est.note) h += `<div class="note" style="margin-top:4px">${esc(S.est.note)}</div>`;
   }
+  const ms = S.scene.mission;
+  if (ms && S.opts.showMission) {
+    h += `<div class="row"><span class="line thin" style="border-color:${c.mission};border-top-style:dashed"></span>預定航線(${ms.wps.length} 個航點,編號 = 任務序號)</div>`;
+  }
   el.innerHTML = h;
   el.classList.remove("hidden");
 }
@@ -1053,6 +1144,7 @@ function clearScene() {
     if (S.prim[k]) { prims.remove(S.prim[k]); S.prim[k] = null; }
   }
   S.scene = null; S.ref = null; S.est = null; S.att = null; S.err = null; S.modes = null;
+  clearMission();
   S.linePts = null;
   if (S.model) S.model.show = false;
   if (S.dyn) for (const k of ["trail", "drop", "link", "est"]) S.dyn[k].show = false;
@@ -1148,6 +1240,10 @@ const app = {
         if (S.prim.est) S.prim.est.show = !!S.opts.showEst;
         renderLegend();
       }
+      if (prev.showMission !== S.opts.showMission) {
+        setMissionShown();
+        renderLegend();
+      }
       if (!S.opts.follow) stopFollow();
       updateTime();
       pushIonStatus();
@@ -1176,6 +1272,7 @@ const app = {
       modelReady: !!(S.model && S.modelReady), following: S.following,
       ground: S.ground, base: S.applied.base, t: S.t, ion: Object.assign({}, S.ion), fitKey: S.fitKey,
       linePts: S.linePts ? S.linePts.length : 0, errors: S.errors.slice(-5),
+      mission: S.mission ? { n: S.mission.points.length, show: S.mission.line.show } : null,
       overlay: $("overlay").classList.contains("hidden") ? "" : $("ov-title").textContent,
     };
   },

@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import align, fakebin, frames, logio, metrics, pipeline, sim, sync, timeline  # noqa: E402
+from core import align, fakebin, frames, logio, metrics, mission, pipeline, sim, sync, timeline  # noqa: E402
 from core.types import EV_ARM, EV_DISARM, EV_MODE, EV_RESET, LogData, LogEvent  # noqa: E402
 
 
@@ -373,6 +373,69 @@ def test_travel_distance():
     assert 0.9 < r.dist_ratio < 1.1, r.dist_ratio
     print(f"  GPS {r.path_len_ref:.1f} m / VISP {r.path_len_est:.1f} m(比 {r.dist_ratio:.3f};"
           f"Sim3 對齊後軌跡長 {metrics.path_length(s3.est_enu):.1f} m,不採用)")
+
+
+def test_mission_waypoints():
+    """CMD → 預定航點:只留帶位置的導航指令(排除 home / RTL),轉成 ENU,.bin 往返不失真。"""
+    logdata = sim.make_sim_logdata()
+    wps = mission.load_mission(logdata)
+    assert len(wps) == 16 and [w.n for w in wps] == list(range(1, 17)), [w.n for w in wps]
+    assert all(w.cmd == 16 and w.has_position for w in wps)
+    enu = mission.waypoints_enu(wps, logdata.origin)
+    assert enu.shape == (16, 3) and abs(np.median(enu[:, 2]) - wps[0].alt) < 1e-3   # 相對高度 → 以原點為 home
+    # 預定轉角應落在模擬的 30 m 正方形上
+    assert np.all(np.minimum(np.abs(enu[:, 0]), np.abs(enu[:, 0] - 30)) < 1.5)
+    assert np.all(np.minimum(np.abs(enu[:, 1]), np.abs(enu[:, 1] - 30)) < 1.5)
+    # 絕對高度 frame:高度為海拔,要扣掉原點高度
+    w_abs = mission.Waypoint(1, 16, "WAYPOINT", wps[0].lat, wps[0].lng, logdata.origin[2] + 12.0, 0, 0.0)
+    assert abs(mission.waypoints_enu([w_abs], logdata.origin)[0, 2] - 12.0) < 1e-6
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "m.bin")
+        fakebin.write_logdata_to_bin(logdata, p)
+        back = mission.load_mission(logio.load_bin(p))
+        assert [w.n for w in back] == [w.n for w in wps]
+        assert max(abs(a.lat - b.lat) + abs(a.lng - b.lng) for a, b in zip(wps, back)) < 1e-6
+    class _NoIdx:
+        index = None
+    assert mission.load_mission(_NoIdx()) == []
+    print(f"  {len(wps)} 個航點,ENU 落在預期轉角;.bin 往返一致;無 CMD → 空清單")
+
+
+def test_mission_progress():
+    """推估目前飛往的航點:只在 AUTO 推進、進入半徑才算到達、離開 AUTO 保留進度、可跳過漏掉的航點。"""
+    wp = np.array([[10.0, 0, 0], [20, 0, 0], [30, 0, 0], [40, 0, 0]])
+    t = np.arange(0, 60.0, 0.5)
+    x = np.clip(t - 5.0, 0, 40.0)                       # 5 s 起飛,以 1 m/s 沿 x 軸前進
+    enu = np.column_stack([x, np.zeros_like(x), np.zeros_like(x)])
+    auto = np.ones(t.size, bool)
+    ct, ck = mission.estimate_progress(t, enu, wp, auto, radius=2.0)
+    assert list(ck) == [0, 1, 2, 3, 4], list(ck)         # 4 = 全部到達
+    assert abs(ct[1] - (5.0 + 10.0 - 2.0)) < 1.0         # 進入第一個航點半徑 2 m 的時刻
+
+    auto2 = (t < 20) | (t > 40)                          # 20~40 s 暫離 AUTO(手動接管)
+    ct2, ck2 = mission.estimate_progress(t, enu, wp, auto2, radius=2.0)
+    assert -1 in ck2 and ck2[0] == 0
+    k_before = ck2[list(ck2).index(-1) - 1]
+    k_after = ck2[list(ck2).index(-1) + 1]
+    assert k_after >= k_before and ck2[-1] == 4, list(ck2)   # 進度保留,回到 AUTO 續飛
+
+    jump = np.column_stack([np.where(t < 30, 0.0, 30.0), np.zeros(t.size), np.zeros(t.size)])
+    _, ck3 = mission.estimate_progress(t, jump, wp, np.ones(t.size, bool), radius=2.0, look_ahead=2)
+    assert ck3[-1] == 3, list(ck3)                       # 直接出現在 WP3 附近:一次跳過 WP1、WP2
+    _, ck4 = mission.estimate_progress(t, enu, np.zeros((0, 3)), auto, radius=2.0)
+    assert list(ck4) == [-1]                             # 沒有航點 → 永遠沒有目標
+
+    logdata = sim.make_sim_logdata()
+    wps = mission.load_mission(logdata)
+    ref = logdata.sources["GPS"]
+    mask = mission.auto_mask(timeline.mode_changes(logdata.events), ref.t)
+    assert 0 < mask.sum() < ref.n
+    ct5, ck5 = mission.estimate_progress(ref.t, ref.enu(logdata.origin),
+                                         mission.waypoints_enu(wps, logdata.origin), mask,
+                                         mission.reach_radius(logdata))
+    reached = [k for k in ck5 if k >= 0]
+    assert reached == list(range(len(wps) + 1)), reached  # 模擬飛行依序飛完全部 16 個航點
+    print(f"  合成路徑依序到達、AUTO 外不推進、可續飛 / 跳過;模擬飛行 {len(wps)} 個航點依序到達")
 
 
 def test_bin_roundtrip():

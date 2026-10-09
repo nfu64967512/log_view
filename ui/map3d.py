@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QInputDialog, QL
 
 from core import align as align_mod
 from core import frames, pipeline
+from core import mission as mission_mod
 from core.timeline import horizontal_speed, mode_changes
 from core.types import EV_RESET
 
@@ -256,6 +257,26 @@ def _short_align(info: dict) -> str:
     return head or label
 
 
+def _mission(logdata, origin, ref_t, ref_enu, modes, tb) -> dict | None:
+    """預定任務航點(log 的 CMD)→ 場景資料;沒有帶位置的航點回傳 None。"""
+    wps = mission_mod.load_mission(logdata)
+    if not wps:
+        return None
+    enu = mission_mod.waypoints_enu(wps, origin)
+    lat = np.array([w.lat for w in wps])
+    lng = np.array([w.lng for w in wps])
+    # 目前飛往第幾個航點:log 沒有逐航點紀錄,由 AUTO 期間的航跡推估(只存「變化點」)
+    radius = mission_mod.reach_radius(logdata)
+    pt, pk = mission_mod.estimate_progress(
+        ref_t, ref_enu, enu, mission_mod.auto_mask(modes, ref_t), radius)
+    return {"source": "CMD", "radius": radius,
+            "prog": {"t": _r(pt - tb, 3), "k": [int(k) for k in pk]},
+            "wps": [{"n": w.n, "cmd": w.cmd, "name": w.name, "lat": round(float(la), 7),
+                     "lng": round(float(lo), 7), "u": round(float(u), 2), "alt": round(w.alt, 2),
+                     "frame": w.frame}
+                    for w, la, lo, u in zip(wps, lat, lng, enu[:, 2])]}
+
+
 def build_scene(logdata, ref_name: str, est_name: str, res=None) -> dict | None:
     """LogData(+ ATE 結果)→ 3D 地圖場景(可 JSON 序列化)。log 沒有地理原點時回傳 None。
 
@@ -327,6 +348,7 @@ def build_scene(logdata, ref_name: str, est_name: str, res=None) -> dict | None:
                "rmse": round(float(res.stats["3d"]["rmse"]), 3)}
 
     att = _attitude(logdata, rt_abs, renu, tb)
+    mission = _mission(logdata, origin, ref.t, rp, modes, tb)
     index = getattr(logdata, "index", None)
     vehicle = str(getattr(index, "vehicle", "") or "copter").lower() if index is not None else "copter"
     kind = models.model_kind(vehicle)
@@ -355,7 +377,9 @@ def build_scene(logdata, ref_name: str, est_name: str, res=None) -> dict | None:
         "err": err,
         "att": att,
         "attitude": att["source"],
-        "colors": {"ref": theme.C_REF, "est": theme.C_EST, "err": theme.C_ERR, "ink": theme.INK,
+        "mission": mission,
+        "colors": {"ref": theme.C_REF, "est": theme.C_EST, "err": theme.C_ERR, "mission": theme.C_MISSION,
+                   "ink": theme.INK,
                    "ink2": theme.INK_2, "muted": theme.MUTED, "surface": theme.SURFACE,
                    "panel": theme.PANEL, "border": theme.BORDER, "ramp": list(theme.SEQ_RAMP)},
     }
@@ -618,7 +642,7 @@ class Map3DWidget(QWidget):
         bar.setStyleSheet(_OPTS_QSS)
         h = QHBoxLayout(bar)
         h.setContentsMargins(10, 4, 10, 4)
-        h.setSpacing(8)
+        h.setSpacing(4)
         h.addWidget(QLabel("底圖"))
         self.cmb_base = QComboBox()
         for key, txt in BASE_LAYERS:
@@ -639,6 +663,10 @@ class Map3DWidget(QWidget):
         self.chk_est.setChecked(True)
         self.chk_est.setToolTip("顯示估測軌跡(有 ATE 結果時已套用對齊與時間偏移)")
         h.addWidget(self.chk_est)
+        self.chk_mission = QCheckBox("預定航線")
+        self.chk_mission.setChecked(True)
+        self.chk_mission.setToolTip("顯示 log 內的預定任務航點(CMD):虛線航線 + 編號;沒有任務的 log 不畫")
+        h.addWidget(self.chk_mission)
         self.chk_follow = QCheckBox("跟隨飛機")
         self.chk_follow.setToolTip("視角跟著飛機移動,保留目前的旋轉與縮放(可用滑鼠環繞飛機)")
         h.addWidget(self.chk_follow)
@@ -652,7 +680,7 @@ class Map3DWidget(QWidget):
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.lbl_status.installEventFilter(self)
         h.addWidget(self.lbl_status, 1)
-        self.btn_token = QPushButton("Cesium ion token…")
+        self.btn_token = QPushButton("Token…")
         self.btn_token.setToolTip("設定 Cesium ion access token:啟用全球地形(軌跡貼地形高度)"
                                   "與 ion 衛星影像")
         h.addWidget(self.btn_token)
@@ -665,6 +693,7 @@ class Map3DWidget(QWidget):
         self.cmb_color.currentIndexChanged.connect(self._on_color_changed)
         self.cmb_color.activated.connect(self._on_color_activated)
         self.chk_est.toggled.connect(lambda _on: self._push_options())
+        self.chk_mission.toggled.connect(lambda _on: self._push_options())
         self.chk_follow.toggled.connect(lambda _on: self._push_options())
         self.btn_all.clicked.connect(self.view_all)
         self.btn_token.clicked.connect(self._ask_token)
@@ -679,7 +708,7 @@ class Map3DWidget(QWidget):
         return lab
 
     def _set_controls_enabled(self, on: bool):
-        for w in (self.cmb_base, self.cmb_color, self.chk_est, self.chk_follow, self.btn_all,
+        for w in (self.cmb_base, self.cmb_color, self.chk_est, self.chk_mission, self.chk_follow, self.btn_all,
                   self.btn_token):
             w.setEnabled(on)
 
@@ -823,6 +852,7 @@ class Map3DWidget(QWidget):
         return {"base": self.cmb_base.currentData() or "esri",
                 "color": self.cmb_color.currentData() or "mode",
                 "showEst": self.chk_est.isChecked(),
+                "showMission": self.chk_mission.isChecked(),
                 "follow": self.chk_follow.isChecked(),
                 "token": self._token()}
 
