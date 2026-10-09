@@ -63,6 +63,9 @@ class _WheelGuard(QObject):
 
 
 class MainWindow(QMainWindow):
+    _DIST_LABEL_REF = "參考 移動距離"
+    _DIST_LABEL_EST = "估測 移動距離"
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("VIO / GPS ATE Studio — 飛行 log 檢視與絕對軌跡誤差分析")
@@ -332,6 +335,10 @@ class MainWindow(QMainWindow):
         self.tile_max = StatTile("3D 最大")
         g.addWidget(self.tile_3d, 0, 0); g.addWidget(self.tile_2d, 0, 1)
         g.addWidget(self.tile_p95, 1, 0); g.addWidget(self.tile_max, 1, 1)
+        # 移動距離:標籤隨所選來源改名(GPS / VISP …),見 _show_result
+        self.tile_dist_ref = StatTile(self._DIST_LABEL_REF, decimals=1)
+        self.tile_dist_est = StatTile(self._DIST_LABEL_EST, decimals=1)
+        g.addWidget(self.tile_dist_ref, 2, 0); g.addWidget(self.tile_dist_est, 2, 1)
         c.add_layout(g)
         self.lbl_align_info = QLabel("")
         self.lbl_align_info.setObjectName("Hint")
@@ -643,8 +650,7 @@ class MainWindow(QMainWindow):
         for p in self._result_plots():
             p.show_placeholder()
         self.table.clear_values()
-        for t in (self.tile_3d, self.tile_2d, self.tile_p95, self.tile_max):
-            t.set(None)
+        self._clear_result_tiles()
         self.lbl_align_info.setText("")
         self.txt_report.setPlainText("計算後在此顯示完整文字報告。")
 
@@ -960,11 +966,17 @@ class MainWindow(QMainWindow):
         self.result = res
         self._show_result(res)
 
+    def _clear_result_tiles(self):
+        for t in (self.tile_3d, self.tile_2d, self.tile_p95, self.tile_max,
+                  self.tile_dist_ref, self.tile_dist_est):
+            t.set(None)
+        self.tile_dist_ref.set_label(self._DIST_LABEL_REF)
+        self.tile_dist_est.set_label(self._DIST_LABEL_EST)
+
     def _invalidate_result(self, msg: str):
         """目前設定算不出結果:清掉所有舊結果(不能讓舊區間的數字看起來像新區間的)。"""
         self.result = None
-        for t in (self.tile_3d, self.tile_2d, self.tile_p95, self.tile_max):
-            t.set(None)
+        self._clear_result_tiles()
         self.table.clear_values()
         self.lbl_align_info.setText("")
         self.lbl_origin.setText("")
@@ -997,6 +1009,12 @@ class MainWindow(QMainWindow):
         self.tile_2d.set(s["2d"]["rmse"], "東北平面")
         self.tile_p95.set(s["3d"]["p95"], "95% 樣本在此之內")
         self.tile_max.set(s["3d"]["max"], "單點最差")
+        self.tile_dist_ref.set_label(f"{res.ref_name} 移動距離")
+        self.tile_dist_ref.set(res.path_len_ref, "分析區間內累積 3D 路徑")
+        self.tile_dist_est.set_label(f"{res.est_name} 移動距離")
+        r = res.dist_ratio
+        self.tile_dist_est.set(res.path_len_est,
+                               f"為 {res.ref_name} 的 {r * 100:.1f}%(對齊前)" if r is not None else "")
 
         a = res.align_info
         scale_txt = (f",尺度 {a['scale']:.4f}(≈{(a['scale'] - 1) * 100:+.2f}%)"
@@ -1005,8 +1023,7 @@ class MainWindow(QMainWindow):
             f"對齊:{a['label']}<br>"
             f"偏航修正 {a['yaw_deg']:+.2f}°,平移 "
             f"[{a['translation'][0]:+.2f}, {a['translation'][1]:+.2f}, "
-            f"{a['translation'][2]:+.2f}] m{scale_txt}<br>"
-            f"路徑長:參考 {res.path_len_ref:.0f} m / 估測 {res.path_len_est:.0f} m")
+            f"{a['translation'][2]:+.2f}] m{scale_txt}")
         self.lbl_origin.setText(f"ENU 原點:{res.origin_desc}" if res.origin_desc else "")
 
         self.table.set_stats(s)

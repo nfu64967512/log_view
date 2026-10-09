@@ -59,3 +59,12 @@ def path_length(p: np.ndarray) -> float:
     if p.shape[0] < 2:
         return 0.0
     return float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
+
+
+def path_cumulative(p: np.ndarray) -> np.ndarray:
+    """逐點累積移動距離(第一點 = 0,最後一點 = path_length)。"""
+    p = np.asarray(p, dtype=float)
+    out = np.zeros(p.shape[0])
+    if p.shape[0] >= 2:
+        out[1:] = np.cumsum(np.linalg.norm(np.diff(p, axis=0), axis=1))
+    return out

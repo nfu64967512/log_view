@@ -32,13 +32,14 @@ class Card(QFrame):
 class StatTile(QFrame):
     """單一數字 + 標籤;數字本身就是重點,不畫圖。"""
 
-    def __init__(self, label: str, unit: str = "m", parent=None):
+    def __init__(self, label: str, unit: str = "m", decimals: int = 3, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
+        self._decimals = decimals
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 9, 12, 10)
         v.setSpacing(1)
-        cap = QLabel(label)
+        cap = self.cap = QLabel(label)
         cap.setObjectName("StatLabel")
         row = QHBoxLayout()
         row.setSpacing(4)
@@ -56,8 +57,11 @@ class StatTile(QFrame):
         v.addLayout(row)
         v.addWidget(self.sub)
 
+    def set_label(self, label: str):
+        self.cap.setText(label)
+
     def set(self, value: float | None, sub: str = "", accent: str | None = None):
-        self.value.setText("—" if value is None else f"{value:.3f}")
+        self.value.setText("—" if value is None else f"{value:.{self._decimals}f}")
         self.value.setStyleSheet(f"color:{accent};" if accent else "")
         self.sub.setText(sub)
 

@@ -92,6 +92,13 @@ def main() -> int:
         rmse = w.result.stats["3d"]["rmse"]
         check("RMSE 落在合理範圍", 0.5 < rmse < 2.0, f"(3D RMSE {rmse:.3f} m)")
         check("統計磚已填值", w.tile_3d.value.text() != "—", f"({w.tile_3d.value.text()})")
+        check("移動距離磚:標籤用來源名、數值 = 結果的距離",
+              w.tile_dist_ref.cap.text() == f"{w.result.ref_name} 移動距離"
+              and w.tile_dist_est.cap.text() == f"{w.result.est_name} 移動距離"
+              and float(w.tile_dist_ref.value.text()) == round(w.result.path_len_ref, 1)
+              and float(w.tile_dist_est.value.text()) == round(w.result.path_len_est, 1),
+              f"({w.tile_dist_ref.cap.text()} {w.tile_dist_ref.value.text()} / "
+              f"{w.tile_dist_est.cap.text()} {w.tile_dist_est.value.text()})")
         check("統計表已填值", w.table.item(0, 1).text() != "—",
               f"({w.table.item(0, 1).text()})")
         check("報告已產生", "ATE RMSE" in w.txt_report.toPlainText())
@@ -234,6 +241,7 @@ def main() -> int:
         check("視窗仍存活", w.isVisible())
         check("舊結果已清掉(不讓舊數字冒充新設定)",
               w.result is None and w.tile_3d.value.text() == "—"
+              and w.tile_dist_ref.value.text() == "—" and w.tile_dist_est.value.text() == "—"
               and "無法計算" in w.txt_report.toPlainText(), f"({w.tile_3d.value.text()})")
         check("讀數不再顯示舊誤差", "誤差" not in w.playback.lbl_readout.text(),
               f"({w.playback.lbl_readout.text()[:40]})")

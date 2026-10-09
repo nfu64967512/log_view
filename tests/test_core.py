@@ -332,16 +332,47 @@ def test_report_and_csv():
     logdata = sim.make_sim_logdata()
     res = pipeline.compute(logdata, "GPS", "VISP", method="se3")
     txt = pipeline.format_report(res, logdata)
-    for token in ("ATE RMSE", "RMSE", "P95", "空間對齊", "ENU 原點"):
+    for token in ("ATE RMSE", "RMSE", "P95", "空間對齊", "ENU 原點", "移動距離:GPS", "VISP"):
         assert token in txt, f"報告缺少 {token}"
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "ate.csv")
         pipeline.save_csv(res, logdata, p)
         rows = np.loadtxt(p, delimiter=",", skiprows=3, encoding="utf-8-sig")
-        assert rows.shape == (res.n, 12), rows.shape
+        assert rows.shape == (res.n, 14), rows.shape
         # err_3d 欄位應等於重算的誤差長度
         assert np.max(np.abs(rows[:, 11] - res.e3)) < 1e-3
-    print(f"  報告 {len(txt)} 字元、CSV {res.n} 列 × 12 欄,數值一致")
+        # 移動距離欄:逐點累積、從 0 起算、最後一列 = 總移動距離
+        assert rows[0, 12] == 0.0 and rows[0, 13] == 0.0
+        assert np.all(np.diff(rows[:, 12]) >= 0) and np.all(np.diff(rows[:, 13]) >= 0)
+        assert abs(rows[-1, 12] - res.path_len_ref) < 1e-3
+        assert abs(rows[-1, 13] - res.path_len_est) < 1e-3
+        with open(p, encoding="utf-8-sig") as f:
+            head = [next(f) for _ in range(3)]
+        assert "ref_dist_m,est_dist_m" in head[2] and "移動距離 GPS=" in head[0]
+    print(f"  報告 {len(txt)} 字元、CSV {res.n} 列 × 14 欄,數值一致")
+
+
+def test_travel_distance():
+    """GPS / VIO 移動距離:逐點累積、不受對齊方式影響(尺度誤差要看得出來)。"""
+    logdata, truth = sim.make_sim_with_truth(seed=7)
+    res = {m: pipeline.compute(logdata, "GPS", "VISP", method=m) for m in ("none", "se3", "sim3")}
+    r = res["se3"]
+    assert r.path_len_ref > 100 and r.path_len_est > 100
+    assert r.cum_ref.shape == r.cum_est.shape == r.t.shape
+    assert r.cum_ref[0] == 0.0 and r.cum_est[0] == 0.0
+    assert abs(r.cum_ref[-1] - r.path_len_ref) < 1e-9 and abs(r.cum_est[-1] - r.path_len_est) < 1e-9
+    assert abs(r.path_len_ref - metrics.path_length(r.ref_enu)) < 1e-6
+    # VIO 距離取對齊前的軌跡:三種對齊方式(含會縮放的 Sim3)結果一致
+    for m in ("none", "sim3"):
+        assert abs(res[m].path_len_est - r.path_len_est) < 1e-6, m
+    # Sim3 對齊後的軌跡被縮放過(長度 = 原始 × 尺度),所以移動距離不能取對齊後的
+    s3 = res["sim3"]
+    scale = s3.align_info["scale"]
+    assert abs(scale - 1) > 1e-3, "模擬資料應有可辨識的尺度誤差"
+    assert abs(metrics.path_length(s3.est_enu) - s3.path_len_est * scale) < 1e-6 * s3.path_len_est
+    assert 0.9 < r.dist_ratio < 1.1, r.dist_ratio
+    print(f"  GPS {r.path_len_ref:.1f} m / VISP {r.path_len_est:.1f} m(比 {r.dist_ratio:.3f};"
+          f"Sim3 對齊後軌跡長 {metrics.path_length(s3.est_enu):.1f} m,不採用)")
 
 
 def test_bin_roundtrip():

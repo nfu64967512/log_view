@@ -26,8 +26,18 @@ class AteResult:
     origin: tuple | None
     origin_desc: str
     cfg: dict = field(default_factory=dict)
+    # 移動距離(參考 = GPS、估測 = VIO 時即「GPS 移動距離 / VIO 移動距離」):
+    # 沿同步後的樣本累加 3D 位移;估測取「對齊前」的原始軌跡 —
+    # Sim(3) 對齊會把尺度修正掉,若用對齊後的軌跡就看不出 VIO 的尺度誤差
     path_len_ref: float = 0.0
     path_len_est: float = 0.0
+    cum_ref: np.ndarray = field(default_factory=lambda: np.zeros(0))   # 逐點累積距離(m)
+    cum_est: np.ndarray = field(default_factory=lambda: np.zeros(0))
+
+    @property
+    def dist_ratio(self) -> float | None:
+        """估測移動距離 / 參考移動距離;參考沒動(距離 0)時為 None。"""
+        return self.path_len_est / self.path_len_ref if self.path_len_ref > 1e-9 else None
 
     @property
     def n(self) -> int:
@@ -73,6 +83,8 @@ def compute(logdata: LogData, ref_name: str, est_name: str,
     ep_al, info = align_mod.align(ep, rp, method)
     err = ep_al - rp
     stats = metrics.ate_stats(err)
+    cum_ref = metrics.path_cumulative(rp)
+    cum_est = metrics.path_cumulative(ep)
 
     return AteResult(
         ref_name=ref_name, est_name=est_name,
@@ -81,7 +93,8 @@ def compute(logdata: LogData, ref_name: str, est_name: str,
         stats=stats, align_info=info, origin=origin, origin_desc=origin_desc,
         cfg={"t0": t0, "t1": t1, "offset_s": offset_s,
              "method": method, "max_gap_s": max_gap_s},
-        path_len_ref=metrics.path_length(rp), path_len_est=metrics.path_length(ep_al),
+        path_len_ref=float(cum_ref[-1]), path_len_est=float(cum_est[-1]),
+        cum_ref=cum_ref, cum_est=cum_est,
     )
 
 
@@ -146,7 +159,8 @@ def format_report(res: AteResult, logdata: LogData) -> str:
         f"空間對齊:{a['label']};yaw {a['yaw_deg']:+.2f}°,"
         f"平移 [{a['translation'][0]:+.2f}, {a['translation'][1]:+.2f}, {a['translation'][2]:+.2f}] m,"
         f"尺度 {a['scale']:.4f}",
-        f"路徑長:參考 {res.path_len_ref:.1f} m / 估測 {res.path_len_est:.1f} m",
+        f"移動距離:{res.ref_name} {res.path_len_ref:.1f} m / {res.est_name} {res.path_len_est:.1f} m"
+        + _ratio_text(res),
         "",
         f"ATE RMSE:3D {s['3d']['rmse']:.3f} m|水平 {s['2d']['rmse']:.3f} m",
         "",
@@ -167,6 +181,13 @@ def format_report(res: AteResult, logdata: LogData) -> str:
         "ATE = 時間同步(+空間對齊)後成對位置差的統計;3D 為誤差向量長度,水平只取東北分量。",
     ]
     return "\n".join(lines)
+
+
+def _ratio_text(res: AteResult) -> str:
+    r = res.dist_ratio
+    if r is None:
+        return ""
+    return f"(估測為參考的 {r * 100:.1f}%,{(r - 1) * 100:+.1f}%;取對齊前的原始軌跡)"
 
 
 def _segment_lines(res: AteResult, logdata: LogData) -> list[str]:
@@ -197,11 +218,14 @@ def save_csv(res: AteResult, logdata: LogData, path: str) -> None:
     tb = logdata.t_base
     header = (
         f"# vio_ate_studio ATE 匯出|參考={res.ref_name} 估測={res.est_name} "
-        f"對齊={res.align_info['method']} 偏移={res.cfg['offset_s'] * 1000:.0f}ms\n"
+        f"對齊={res.align_info['method']} 偏移={res.cfg['offset_s'] * 1000:.0f}ms "
+        f"移動距離 {res.ref_name}={res.path_len_ref:.2f}m {res.est_name}={res.path_len_est:.2f}m\n"
         f"# ENU 原點:{_fmt_origin(res)}\n"
-        "t_rel_s,ref_E,ref_N,ref_U,est_E,est_N,est_U,err_E,err_N,err_U,err_2d,err_3d\n"
+        "t_rel_s,ref_E,ref_N,ref_U,est_E,est_N,est_U,err_E,err_N,err_U,err_2d,err_3d,"
+        "ref_dist_m,est_dist_m\n"
     )
-    data = np.column_stack([res.t - tb, res.ref_enu, res.est_enu, res.err, res.e2, res.e3])
+    data = np.column_stack([res.t - tb, res.ref_enu, res.est_enu, res.err, res.e2, res.e3,
+                            res.cum_ref, res.cum_est])
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         f.write(header)
         np.savetxt(f, data, fmt="%.4f", delimiter=",")

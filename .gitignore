@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+venv/
+.venv/
+output/*.csv
+output/*.txt
+output/*.png
+
+# 原始飛行 log(單檔可達 1 GB,超過 GitHub 100 MB 上限)
+output/*.BIN
