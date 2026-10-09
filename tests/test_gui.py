@@ -62,7 +62,7 @@ def main() -> int:
     print("[視窗建立]")
     check("主視窗顯示", w.isVisible())
     check("計算鈕在無資料時停用", not w.btn_run.isEnabled())
-    check("分頁數 = 12", w.tabs.count() == 12, f"(實得 {w.tabs.count()})")
+    check("分頁數 = 13(含姿態儀)", w.tabs.count() == 13, f"(實得 {w.tabs.count()})")
     check("第二個分頁是 PID 調參", w.tabs.tabText(1) == "PID 調參")
     check("第一個分頁是 3D 地圖", w.tabs.tabText(0) == "3D 地圖")
     check("左側四個分頁", [w.side.tabText(i) for i in range(w.side.count())]
@@ -92,6 +92,16 @@ def main() -> int:
         rmse = w.result.stats["3d"]["rmse"]
         check("RMSE 落在合理範圍", 0.5 < rmse < 2.0, f"(3D RMSE {rmse:.3f} m)")
         check("統計磚已填值", w.tile_3d.value.text() != "—", f"({w.tile_3d.value.text()})")
+        tr = w.p_att._track
+        check("姿態儀:載入 log 後有 ATT 序列", tr is not None and len(tr.t) > 100)
+        i = len(tr.t) // 3
+        w.p_att.set_time(float(tr.t[i]))
+        st = w.p_att._state
+        check("姿態儀:播放頭位置取到對應的 Roll / Pitch / Yaw",
+              st is not None and abs(st["roll"] - tr.roll[i]) < 1e-9
+              and abs(st["pitch"] - tr.pitch[i]) < 1e-9 and 0 <= st["yaw"] < 360)
+        w.p_att.set_time(float(tr.t[-1]) + 1000)
+        check("姿態儀:離 ATT 資料太遠 → 無資料而非沿用舊值", w.p_att._state is None)
         check("移動距離磚:標籤用來源名、數值 = 結果的距離",
               w.tile_dist_ref.cap.text() == f"{w.result.ref_name} 移動距離"
               and w.tile_dist_est.cap.text() == f"{w.result.est_name} 移動距離"

@@ -25,6 +25,7 @@ from core import timeline as tl
 from core.types import KIND_GLOBAL, KIND_LABEL
 
 from . import plots, theme
+from .attitude import AttitudeIndicator
 from .fieldplot import FieldPlot
 # QtWebEngine 必須在 QApplication 建立之前載入:run() 與測試都先 import 本模組
 from .map3d import Map3DWidget, build_scene
@@ -391,6 +392,8 @@ class MainWindow(QMainWindow):
         self.p_tune.analyzeRequested.connect(lambda: self._run_tuning(force=True))
         self.p_tune.set_report(None, message="載入 log 後,在這裡分析 Roll / Pitch / Yaw 的追蹤與震盪,給 PID 調整方向")
         self.tabs.addTab(self.p_tune, "PID 調參")
+        self.p_att = AttitudeIndicator()
+        self.tabs.addTab(self.p_att, "姿態儀")
         self.tabs.addTab(self.p_overview, "資料總覽")
         self.tabs.addTab(self.p_play, "軌跡播放")
         self.tabs.addTab(self.p_top, "平面軌跡")
@@ -647,6 +650,7 @@ class MainWindow(QMainWindow):
         self.btn_run.setEnabled(True)
 
         self.p_overview.draw_logdata(logdata, self._display_origin())
+        self.p_att.set_logdata(logdata)
         for p in self._result_plots():
             p.show_placeholder()
         self.table.clear_values()
@@ -778,7 +782,7 @@ class MainWindow(QMainWindow):
             self._refresh_map(self._map_pending[0])
         if w is self.p_tune:
             self._run_tuning()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, AttitudeIndicator)):
             w.set_time(self.playback.time())
 
     def _field_plot_visible(self) -> bool:
@@ -786,7 +790,7 @@ class MainWindow(QMainWindow):
 
     def _on_time(self, t: float):
         w = self.tabs.currentWidget()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, AttitudeIndicator)):
             w.set_time(t)
         if self._field_plot_visible():
             self.fplot.set_time(t)
