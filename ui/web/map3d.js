@@ -909,6 +909,7 @@ function fmtDeg(v) {
 
 function renderHud(rel, r, a) {
   const el = $("hud");
+  const txt = $("hud-text");
   if (!S.scene || rel === null) {
     if (S.hudHtml) { el.classList.add("hidden"); S.hudHtml = ""; }
     return;
@@ -940,10 +941,62 @@ function renderHud(rel, r, a) {
   h += `</div>`;
   if (S.scene.attitude === "derived") h += `<div class="foot">航向由航跡推估(log 無 ATT 姿態)</div>`;
   if (h !== S.hudHtml) {
-    el.innerHTML = h;
+    txt.innerHTML = h;
     S.hudHtml = h;
   }
+  // 姿態儀:只有 log 真的有 ATT 才畫(推估姿態的 roll / pitch 恆為 0,畫了反而誤導)
+  const cv = $("hud-att");
+  const showAtt = !!(a && r && S.scene.attitude !== "derived");
+  cv.classList.toggle("hidden", !showAtt);
+  if (showAtt) drawAttitude(cv, a.roll, a.pitch);
   el.classList.remove("hidden");
+}
+
+// 人工地平儀:roll 右傾為正、pitch 抬頭為正(地平線隨抬頭下移、隨右傾逆時針轉)
+function drawAttitude(cv, roll, pitch) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = 140;
+  if (cv.width !== Math.round(cssW * dpr)) { cv.width = cv.height = Math.round(cssW * dpr); }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, cssW, cssW);
+  const c = cssW / 2, R = c - 4, k = R / 25;           // 圓內可見 ±25° 俯仰
+  const rad = Math.PI / 180;
+  g.save();
+  g.beginPath(); g.arc(c, c, R, 0, 2 * Math.PI); g.clip();
+  g.translate(c, c); g.rotate(-roll * rad);
+  const off = pitch * k;
+  g.fillStyle = "#2f6fb5"; g.fillRect(-3 * R, -3 * R + off, 6 * R, 3 * R);
+  g.fillStyle = "#8a5a2b"; g.fillRect(-3 * R, off, 6 * R, 3 * R);
+  g.strokeStyle = "#fff"; g.fillStyle = "#fff"; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(-3 * R, off); g.lineTo(3 * R, off); g.stroke();
+  g.font = "9px sans-serif"; g.textBaseline = "middle";
+  for (let d = -20; d <= 20; d += 5) {
+    if (d === 0) continue;
+    const y = off - d * k, w = R * (d % 10 === 0 ? 0.34 : 0.18);
+    g.beginPath(); g.moveTo(-w, y); g.lineTo(w, y); g.stroke();
+    if (Math.abs(d) === 10) { g.textAlign = "left"; g.fillText(String(Math.abs(d)), w + 3, y); }
+  }
+  g.restore();
+  g.save();
+  g.translate(c, c);
+  g.lineWidth = 2.5; g.strokeStyle = "#3a3a37"; g.beginPath(); g.arc(0, 0, R, 0, 2 * Math.PI); g.stroke();
+  g.lineWidth = 1.5; g.strokeStyle = "#fff";
+  for (const d of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) {      // 滾轉刻度(隨機身固定)
+    const len = R * (d % 30 === 0 ? 0.10 : 0.06), s = Math.sin(d * rad), co = Math.cos(d * rad);
+    g.beginPath(); g.moveTo(s * (R - len), -co * (R - len)); g.lineTo(s * R, -co * R); g.stroke();
+  }
+  g.rotate(-roll * rad);                                                    // 滾轉指標:隨地平線轉
+  g.fillStyle = "#fab219";
+  g.beginPath(); g.moveTo(0, -R + 1); g.lineTo(-R * 0.06, -R + R * 0.14); g.lineTo(R * 0.06, -R + R * 0.14); g.fill();
+  g.rotate(roll * rad);
+  g.strokeStyle = "#fab219"; g.lineWidth = 3;                              // 機身符號(固定)
+  g.beginPath();
+  g.moveTo(-R * 0.45, 0); g.lineTo(-R * 0.15, 0); g.lineTo(-R * 0.15, R * 0.08);
+  g.moveTo(R * 0.45, 0); g.lineTo(R * 0.15, 0); g.lineTo(R * 0.15, R * 0.08);
+  g.stroke();
+  g.beginPath(); g.arc(0, 0, 2.5, 0, 2 * Math.PI); g.fill();
+  g.restore();
 }
 
 function renderLegend() {

@@ -57,6 +57,7 @@ html, body {
                text-align: right; white-space: nowrap; }
 #hud .grid b.dim { color: var(--muted); font-weight: 400; font-family: var(--font); }
 #hud .foot { margin-top: 5px; color: var(--muted); font-size: 11px; }
+#hud-att { display: block; width: 140px; height: 140px; margin: 8px auto 2px; }
 
 .chip { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
         border: 1px solid rgba(255, 255, 255, 0.35); vertical-align: -1px; flex: none; }

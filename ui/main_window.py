@@ -15,7 +15,7 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
                              QFileDialog, QGridLayout, QHBoxLayout, QLabel,
-                             QMainWindow, QMessageBox, QProgressBar, QPushButton,
+                             QDockWidget, QMainWindow, QMessageBox, QProgressBar, QPushButton,
                              QScrollArea, QSplitter, QTabWidget, QTextEdit, QVBoxLayout,
                              QWidget)
 
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self._load_sig.failed.connect(self._on_load_failed)
 
         self._build_menu()
+        self._build_attitude_dock()
         self._build_ui()
         self._build_play_menu()
         self._build_view_menu()
@@ -161,6 +162,31 @@ class MainWindow(QMainWindow):
         for a in self._play_actions:
             m.addAction(a)
 
+    def _build_attitude_dock(self):
+        """姿態儀:浮動小視窗(可拖到別處、可停靠回主視窗),切換分頁時仍看得到目前姿態。"""
+        self.p_att = AttitudeIndicator()
+        self.dock_att = QDockWidget("姿態儀", self)
+        self.dock_att.setObjectName("dock_attitude")
+        self.dock_att.setWidget(self.p_att)
+        self.dock_att.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_att)
+        self.dock_att.setFloating(True)
+        self.dock_att.resize(460, 340)
+        self.dock_att.hide()              # 3D 地圖 HUD 已有小姿態儀;要跨分頁常駐再從「檢視」打開
+        self.dock_att.visibilityChanged.connect(self._on_att_visible)
+        self._att_placed = False
+
+    def _on_att_visible(self, vis: bool):
+        if vis and self.logdata is not None:
+            self.p_att.set_time(self.playback.time())
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if not self._att_placed:          # 第一次顯示:浮動視窗放在主視窗右上角
+            self._att_placed = True
+            g = self.geometry()
+            self.dock_att.move(g.right() - self.dock_att.width() - 24, g.top() + 90)
+
     def _build_view_menu(self):
         m = self.menuBar().addMenu("檢視(&V)")
         self.menuBar().insertMenu(self._help_menu.menuAction(), m)
@@ -171,6 +197,9 @@ class MainWindow(QMainWindow):
         a = QAction("清除欄位圖", self)
         a.triggered.connect(self.fplot.clear_series)
         m.addAction(a)
+        act = self.dock_att.toggleViewAction()
+        act.setText("姿態儀(浮動視窗)")
+        m.addAction(act)
         m.addSeparator()
         a = QAction("3D 地圖:全覽", self)
         a.triggered.connect(self.p_map.view_all)
@@ -392,8 +421,6 @@ class MainWindow(QMainWindow):
         self.p_tune.analyzeRequested.connect(lambda: self._run_tuning(force=True))
         self.p_tune.set_report(None, message="載入 log 後,在這裡分析 Roll / Pitch / Yaw 的追蹤與震盪,給 PID 調整方向")
         self.tabs.addTab(self.p_tune, "PID 調參")
-        self.p_att = AttitudeIndicator()
-        self.tabs.addTab(self.p_att, "姿態儀")
         self.tabs.addTab(self.p_overview, "資料總覽")
         self.tabs.addTab(self.p_play, "軌跡播放")
         self.tabs.addTab(self.p_top, "平面軌跡")
@@ -782,7 +809,7 @@ class MainWindow(QMainWindow):
             self._refresh_map(self._map_pending[0])
         if w is self.p_tune:
             self._run_tuning()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, AttitudeIndicator)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
             w.set_time(self.playback.time())
 
     def _field_plot_visible(self) -> bool:
@@ -790,11 +817,13 @@ class MainWindow(QMainWindow):
 
     def _on_time(self, t: float):
         w = self.tabs.currentWidget()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, AttitudeIndicator)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
             w.set_time(t)
         if self._field_plot_visible():
             self.fplot.set_time(t)
         self.messages.set_time(t)
+        if self.dock_att.isVisible():
+            self.p_att.set_time(t)
         self.playback.set_readout(self._readout(t))
 
     # ---------------- PID 調參 ----------------

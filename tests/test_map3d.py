@@ -830,6 +830,16 @@ def visual(out_dir: str):
     check("分析區間內:估測點 + 誤差連線", inside == [True, True], f"({inside})")
     check("分析區間外:不畫估測點與誤差連線(HUD 區間外)", outside == [False, False] and "區間外" in hud,
           f"({outside})")
+    # MAP-HUD-ATT:HUD 內的小姿態儀(有 ATT 才畫;畫布不是空白)
+    w.set_time(f1[0] + 25.0)
+    _pump(200)
+    att_js = ("(()=>{const c=document.getElementById('hud-att');"
+              "const d=c.getContext('2d').getImageData(0,0,c.width,c.height).data;"
+              "let n=0;for(let i=3;i<d.length;i+=4)if(d[i]>0)n++;"
+              "return JSON.stringify({vis:!c.classList.contains('hidden'),px:n,tot:d.length/4})})()")
+    cv = json.loads(_js(w, att_js) or "{}")
+    check("HUD 姿態儀:有 ATT 時顯示且有畫內容", cv.get("vis") and cv.get("px", 0) > 0.5 * cv.get("tot", 1),
+          f"({cv})")
     _settle(w, 300)
     _shot(w, out_dir, "01b_outside_window")
 

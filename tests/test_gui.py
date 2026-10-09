@@ -62,7 +62,7 @@ def main() -> int:
     print("[視窗建立]")
     check("主視窗顯示", w.isVisible())
     check("計算鈕在無資料時停用", not w.btn_run.isEnabled())
-    check("分頁數 = 13(含姿態儀)", w.tabs.count() == 13, f"(實得 {w.tabs.count()})")
+    check("分頁數 = 12", w.tabs.count() == 12, f"(實得 {w.tabs.count()})")
     check("第二個分頁是 PID 調參", w.tabs.tabText(1) == "PID 調參")
     check("第一個分頁是 3D 地圖", w.tabs.tabText(0) == "3D 地圖")
     check("左側四個分頁", [w.side.tabText(i) for i in range(w.side.count())]
@@ -102,6 +102,25 @@ def main() -> int:
               and abs(st["pitch"] - tr.pitch[i]) < 1e-9 and 0 <= st["yaw"] < 360)
         w.p_att.set_time(float(tr.t[-1]) + 1000)
         check("姿態儀:離 ATT 資料太遠 → 無資料而非沿用舊值", w.p_att._state is None)
+        check("姿態儀浮動視窗:預設隱藏、可從檢視選單打開", w.dock_att.isFloating() and not w.dock_att.isVisible())
+        w.dock_att.toggleViewAction().trigger()
+        _pump(100)
+        check("姿態儀浮動視窗:打開後顯示", w.dock_att.isVisible())
+        w.tabs.setCurrentWidget(w.p_top)          # 停在別的分頁,姿態儀仍要跟著播放頭
+        w.playback.seek(float(tr.t[i]))
+        _pump(100)
+        a1 = dict(w.p_att._state or {})
+        w.playback.seek(float(tr.t[2 * i]))
+        _pump(100)
+        a2 = w.p_att._state
+        check("姿態儀:切到其他分頁後仍隨播放頭更新",
+              a1 and a2 and abs(a2["roll"] - tr.roll[2 * i]) < 1e-9 and a1["roll"] != a2["roll"])
+        w.dock_att.hide()
+        w.playback.seek(float(tr.t[i]))
+        w.dock_att.show()
+        _pump(100)
+        check("姿態儀:關掉再開 → 立刻補上目前播放頭的姿態",
+              w.p_att._state is not None and abs(w.p_att._state["roll"] - tr.roll[i]) < 1e-9)
         check("移動距離磚:標籤用來源名、數值 = 結果的距離",
               w.tile_dist_ref.cap.text() == f"{w.result.ref_name} 移動距離"
               and w.tile_dist_est.cap.text() == f"{w.result.est_name} 移動距離"
@@ -391,6 +410,8 @@ def main() -> int:
         check("點地圖航跡 → 播放頭跳過去", abs(pb.time() - (segs[0].t0 + 3.0)) < 1e-6)
 
         print("\n[焦點與快捷鍵]")
+        w.activateWindow()                         # 姿態儀浮動視窗可能搶走啟用狀態
+        _pump(50)
         w.spn_gap.setFocus()
         _pump(50)
         w.tabs.setCurrentWidget(w.p_top)

@@ -60,7 +60,7 @@ class AttitudeIndicator(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(320, 320)
+        self.setMinimumSize(300, 220)
         self._track: AttitudeTrack | None = None
         self._state: dict | None = None
         self._msg = "載入 log 後顯示姿態"
@@ -89,13 +89,16 @@ class AttitudeIndicator(QWidget):
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._msg)
             return
         s = self._state
-        side = min(self.width() * 0.62, self.height() - 24)
-        r = side / 2
-        cx, cy = self.width() * 0.34, self.height() / 2
+        w, h = self.width(), self.height()
+        # 左:地平儀;右欄:羅盤 + 數值(視窗窄時右欄縮小)
+        col_w = max(110.0, w * 0.36)
+        r = max(20.0, min((w - col_w) / 2 - 8, h / 2 - 10))
+        cx, cy = r + 10, h / 2
         self._draw_horizon(p, cx, cy, r, s["roll"], s["pitch"])
-        self._draw_compass(p, self.width() * 0.80, self.height() * 0.30, min(r * 0.62, self.width() * 0.14),
-                           s["yaw"])
-        self._draw_readout(p, self.width() * 0.62, self.height() * 0.60, s)
+        x0 = w - col_w + 6
+        rc = max(18.0, min(col_w * 0.34, h * 0.22))
+        self._draw_compass(p, x0 + (col_w - 12) / 2, 10 + rc, rc, s["yaw"])
+        self._draw_readout(p, x0, 10 + 2 * rc + 26, col_w - 12, s)
 
     def _draw_horizon(self, p: QPainter, cx, cy, r, roll, pitch):
         p.save()
@@ -181,16 +184,17 @@ class AttitudeIndicator(QWidget):
                                  QPointF(r * 0.14, r * 0.3)]))
         p.restore()
 
-    def _draw_readout(self, p: QPainter, x, y, s):
-        font = QFont(self.font()); font.setPointSizeF(11); p.setFont(font)
-
-        def line(i, name, val, des=None):
-            txt = f"{name}  {val:+7.1f}°" if name != "航向" else f"{name}  {val:6.1f}°"
-            if des is not None:
-                txt += f"   (目標 {des:+.1f}°)"
-            p.setPen(QColor(theme.INK))
-            p.drawText(QPointF(x, y + i * 24), txt)
-
-        line(0, "滾轉", s["roll"], s["des_roll"])
-        line(1, "俯仰", s["pitch"], s["des_pitch"])
-        line(2, "航向", s["yaw"])
+    def _draw_readout(self, p: QPainter, x, y, width, s):
+        big = QFont(self.font()); big.setPointSizeF(max(8.0, min(13.0, width / 11)))
+        small = QFont(self.font()); small.setPointSizeF(max(7.0, big.pointSizeF() - 3))
+        fm_h = int(big.pointSizeF() * 2.1)
+        rows = [("滾轉", f"{s['roll']:+.1f}°", s["des_roll"]),
+                ("俯仰", f"{s['pitch']:+.1f}°", s["des_pitch"]),
+                ("航向", f"{s['yaw']:.1f}°", None)]
+        for i, (name, val, des) in enumerate(rows):
+            top = y + i * fm_h * 1.5
+            p.setFont(small); p.setPen(QColor(theme.MUTED))
+            p.drawText(QRectF(x, top, width, fm_h * 0.6), Qt.AlignmentFlag.AlignLeft, name
+                       + (f"(目標 {des:+.1f}°)" if des is not None else ""))
+            p.setFont(big); p.setPen(QColor(theme.INK))
+            p.drawText(QRectF(x, top + fm_h * 0.5, width, fm_h), Qt.AlignmentFlag.AlignLeft, val)
