@@ -6,6 +6,7 @@
   python main.py --cli ate <log.bin> --segment 2          # 只算第 2 個 ARM 飛行段
   python main.py --cli ate --sim --align sim3
   python main.py --cli info --sim-multi                   # 多航段模擬(開機到關機一份 log)
+  python main.py --cli ekfsrc <log.bin>                   # EKF 來源檢查:有沒有偷參考 GPS
   python main.py --cli tune <log.bin> --segment 1         # PID 調參建議
   python main.py --cli tune --scenario p_high --slow      # PID 調參模擬情境(10 Hz 記錄)
 """
@@ -15,7 +16,7 @@ import argparse
 import sys
 
 from core import align as align_mod
-from core import logio, pipeline, sim, sim_tuning, sync, timeline
+from core import ekfsrc, logio, pipeline, sim, sim_tuning, sync, timeline
 from core.types import EV_RESET, KIND_LABEL
 
 _MAX_MODE_LINES = 40
@@ -108,6 +109,13 @@ def main(argv=None) -> int:
     pa.add_argument("--csv", help="匯出逐點誤差 CSV")
     pa.add_argument("--report", help="匯出文字報告")
 
+    pe = sub.add_parser("ekfsrc", help="EKF 來源檢查:來源組設定、使用中的來源組、GPS 洩漏係數")
+    _add_source_args(pe)
+    pe.add_argument("--vio", default="VISP", help="VIO 位置來源名稱(預設 VISP)")
+    pe.add_argument("--gps", default="GPS", help="GPS 來源名稱(預設 GPS)")
+    pe.add_argument("--ekf", help="EKF 輸出來源名稱(預設 POS,其次 XKF1)")
+    pe.add_argument("--report", help="把文字報告寫到檔案")
+
     pt = sub.add_parser("tune", help="PID 調參建議(追蹤誤差、震盪 → 參數調整方向)")
     _add_source_args(pt)
     pt.add_argument("--scenario", choices=list(sim_tuning.SCENARIOS),
@@ -135,6 +143,8 @@ def main(argv=None) -> int:
         return 0
     if args.cmd == "tune":
         return _tune(args, logdata)
+    if args.cmd == "ekfsrc":
+        return _ekfsrc(args, logdata)
 
     for which, name in (("--ref", args.ref), ("--est", args.est)):
         if name not in logdata.sources:
@@ -183,6 +193,25 @@ def main(argv=None) -> int:
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(pipeline.format_report(res, logdata))
         print(f"已寫出 {args.report}")
+    return 0
+
+
+def _ekfsrc(args, logdata) -> int:
+    info = ekfsrc.inspect(logdata)
+    res, why = None, ""
+    try:
+        res = ekfsrc.leak_analysis(logdata, args.vio, args.gps, args.ekf)
+    except ValueError as e:
+        why = str(e)
+    ekfsrc.apply_leak(info, res)
+    text = ekfsrc.format_report(logdata, info, res)
+    if res is None:
+        text += f"\n註:沒有算洩漏係數({why})"
+    print(text)
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"\n已寫出 {args.report}")
     return 0
 
 

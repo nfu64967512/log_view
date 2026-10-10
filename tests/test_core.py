@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import align, fakebin, frames, logio, metrics, mission, pipeline, sim, sync, timeline  # noqa: E402
+from core import align, ekfsrc, fakebin, frames, logio, metrics, mission, pipeline, sim, sync, timeline  # noqa: E402
 from core.types import EV_ARM, EV_DISARM, EV_MODE, EV_RESET, LogData, LogEvent  # noqa: E402
 
 
@@ -436,6 +436,85 @@ def test_mission_progress():
     reached = [k for k in ck5 if k >= 0]
     assert reached == list(range(len(wps) + 1)), reached  # 模擬飛行依序飛完全部 16 個航點
     print(f"  合成路徑依序到達、AUTO 外不推進、可續飛 / 跳過;模擬飛行 {len(wps)} 個航點依序到達")
+
+
+def test_ekf_leak_coefficient():
+    """洩漏係數:EKF 只跟 VIO → 0、被 GPS 帶著走 → 1、混合 → 混合比;GPS 與 VIO 太接近 → 不可判定。"""
+    rng = np.random.default_rng(3)
+    n = 600
+    vio = np.cumsum(rng.normal(0, 0.05, (n, 3)), axis=0)
+    drift = np.column_stack([np.linspace(0, 6, n) * np.sin(np.linspace(0, 6, n)),
+                             np.linspace(0, 4, n), np.zeros(n)])
+    gps = vio + drift + rng.normal(0, 0.1, (n, 3))
+    a0, s0 = ekfsrc.leak_coefficient(vio, vio, gps)
+    a1, _ = ekfsrc.leak_coefficient(gps, vio, gps)
+    ah, _ = ekfsrc.leak_coefficient(0.3 * gps + 0.7 * vio, vio, gps)
+    assert abs(a0) < 0.05 and abs(a1 - 1) < 0.05 and abs(ah - 0.3) < 0.05, (a0, a1, ah)
+    assert s0 > 0.5
+    near, sb = ekfsrc.leak_coefficient(vio, vio, vio + rng.normal(0, 0.05, (n, 3)))
+    assert np.isnan(near) and sb < 0.5
+    assert np.isnan(ekfsrc.leak_coefficient(vio[:3], vio[:3], gps[:3])[0])
+    print(f"  α:只跟 VIO {a0:.3f}、GPS {a1:.3f}、30% GPS {ah:.3f};GPS≈VIO → 不可判定")
+
+
+def test_ekf_source_sets_and_segments():
+    """來源組設定判讀(純 VIO / VIO+GPS / GPS)、使用中來源組的分段(切換事件、假設值)。"""
+    pure = ekfsrc.SourceSet(2, {"POSXY": 6, "POSZ": 1, "VELXY": 6, "VELZ": 0, "YAW": 6})
+    assert pure.gps_axes == [] and pure.verdict.startswith("純 VIO")
+    mixed = ekfsrc.SourceSet(3, {"POSXY": 6, "POSZ": 1, "VELXY": 3, "VELZ": 0, "YAW": 1})
+    assert mixed.gps_axes == ["VELXY"] and "水平速度" in mixed.verdict and mixed.verdict.startswith("VIO + GPS")
+    assert ekfsrc.SourceSet(1, {"POSXY": 3, "POSZ": 1, "VELXY": 3, "VELZ": 3, "YAW": 1}).verdict.startswith("GPS")
+    assert ekfsrc.SourceSet(3, {a: 0 for a, _ in ekfsrc.AXES}).verdict == "未設定"
+    assert ekfsrc.SourceSet(1, {"POSXY": 0, "POSZ": 3, "VELXY": 0, "VELZ": 0, "YAW": 0}).gps_axes == ["POSZ"]
+    assert ekfsrc.SourceSet(1, {"POSXY": 0, "POSZ": 0, "VELXY": 0, "VELZ": 0, "YAW": 2}).gps_axes == ["YAW"]
+
+    logdata = sim.make_sim_logdata()
+    sets, opt = ekfsrc.source_sets(logdata)
+    assert sets[1].verdict.startswith("GPS") and sets[2].verdict.startswith("純 VIO"), (sets[1].verdict, sets[2].verdict)
+    info = ekfsrc.inspect(logdata)
+    assert info.assumed and [s.set_n for s in info.segments] == [1]        # 沒有切換紀錄 → 假設來源組 1
+    tb = logdata.t_base
+    logdata.events += [LogEvent(tb + 50, "ev", "EK3_SOURCES_SET_TO_SECONDARY"),
+                       LogEvent(tb + 80, "ev", "EK3_SOURCES_SET_TO_PRIMARY")]
+    segs = ekfsrc.inspect(logdata).segments
+    assert [s.set_n for s in segs] == [1, 2, 1], [s.set_n for s in segs]
+    assert abs(segs[1].t0 - (tb + 50)) < 1e-6 and abs(segs[1].t1 - (tb + 80)) < 1e-6
+    assert abs(segs[0].t0 - tb) < 1e-6 and abs(segs[-1].t1 - logdata.t_last) < 1e-6
+    assert all(0.99 <= (s.gps_fix or 1.0) <= 1.0 for s in segs)            # 模擬資料 GPS 全程 3D 定位
+    print("  來源組判讀正確;切換事件 → 分段 [1, 2, 1];沒紀錄 → 假設來源組 1")
+
+
+def test_ekf_leak_analysis_on_sim():
+    """整條管線:EKF 輸出 = 對齊後的 VIO → α≈0;EKF 輸出 = GPS → α≈1;來源不足 → 例外。"""
+    from core.types import KIND_GLOBAL, TrajSource
+    logdata = sim.make_sim_logdata()
+    res = pipeline.compute(logdata, "GPS", "VISP", method="se3")
+    lat, lng, alt = frames.enu_to_geodetic(res.est_enu, res.origin)
+    srcs = dict(logdata.sources)
+    srcs["EKF_V"] = TrajSource("EKF_V", KIND_GLOBAL, res.t, lat=lat, lng=lng, alt=alt)
+    g = logdata.sources["GPS"]
+    srcs["EKF_G"] = TrajSource("EKF_G", KIND_GLOBAL, g.t, lat=g.lat, lng=g.lng, alt=g.alt)
+    ld2 = LogData(sources=srcs, origin=logdata.origin, origin_desc=logdata.origin_desc, path="sim")
+    rv = ekfsrc.leak_analysis(ld2, "VISP", "GPS", "EKF_V", min_std=0.1)
+    rg = ekfsrc.leak_analysis(ld2, "VISP", "GPS", "EKF_G", min_std=0.1)
+    assert abs(rv.overall) < 0.1, rv.overall
+    assert abs(rg.overall - 1.0) < 0.1, rg.overall
+    ok = np.isfinite(rv.alpha)
+    assert ok.sum() >= 3 and abs(np.nanmedian(rv.alpha)) < 0.2 and abs(np.nanmedian(rg.alpha) - 1) < 0.2
+    info = ekfsrc.inspect(logdata)
+    ekfsrc.apply_leak(info, rg)
+    assert info.segments[0].alpha is not None and abs(info.segments[0].alpha - 1) < 0.1
+    assert "跟 GPS 一致" in ekfsrc.judge(info, info.segments[0]) or "GPS" in ekfsrc.judge(info, info.segments[0])
+    for bad in (("VISP", "GPS", "GPS"), ("VISP", "NOPE", "EKF_V")):
+        try:
+            ekfsrc.leak_analysis(ld2, *bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"應拋出 ValueError:{bad}")
+    txt = ekfsrc.format_report(logdata, info, rg)
+    assert "來源組設定" in txt and "洩漏係數" in txt
+    print(f"  EKF=VIO α={rv.overall:+.3f}、EKF=GPS α={rg.overall:.3f};報告含設定表與洩漏係數")
 
 
 def test_bin_roundtrip():

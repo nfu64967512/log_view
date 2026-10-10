@@ -62,7 +62,7 @@ def main() -> int:
     print("[視窗建立]")
     check("主視窗顯示", w.isVisible())
     check("計算鈕在無資料時停用", not w.btn_run.isEnabled())
-    check("分頁數 = 12", w.tabs.count() == 12, f"(實得 {w.tabs.count()})")
+    check("分頁數 = 13(含 EKF 來源)", w.tabs.count() == 13, f"(實得 {w.tabs.count()})")
     check("第二個分頁是 PID 調參", w.tabs.tabText(1) == "PID 調參")
     check("第一個分頁是 3D 地圖", w.tabs.tabText(0) == "3D 地圖")
     check("左側四個分頁", [w.side.tabText(i) for i in range(w.side.count())]
@@ -92,6 +92,18 @@ def main() -> int:
         rmse = w.result.stats["3d"]["rmse"]
         check("RMSE 落在合理範圍", 0.5 < rmse < 2.0, f"(3D RMSE {rmse:.3f} m)")
         check("統計磚已填值", w.tile_3d.value.text() != "—", f"({w.tile_3d.value.text()})")
+        pe = w.p_ekf
+        sets_txt = " ".join(pe.tbl_sets.item(r, c).text() for r in range(pe.tbl_sets.rowCount())
+                            for c in range(pe.tbl_sets.columnCount()) if pe.tbl_sets.item(r, c))
+        check("EKF 來源分頁:來源組設定表有內容(★ = 用 GPS、來源組 2 = 純 VIO)",
+              "★ GPS" in sets_txt and "純 VIO" in sets_txt, f"({sets_txt[:60]})")
+        check("EKF 來源分頁:使用中來源組分段表有資料",
+              pe.tbl_seg.rowCount() >= 1 and "來源組" not in (pe.tbl_seg.item(0, 1).text() or "x")
+              and pe.tbl_seg.item(0, 4).text() != "", f"({pe.tbl_seg.rowCount()} 段)")
+        pe.plot.flush_draw()                    # 分頁沒顯示時圖是延後繪製的
+        check("EKF 來源分頁:GPS(參考)+ VIO(估測)→ 畫出洩漏係數圖",
+              pe.plot.fig.axes and "洩漏係數" in pe.plot.fig.axes[0].get_ylabel(),
+              f"({[a.get_ylabel() for a in pe.plot.fig.axes]})")
         tr = w.p_att._track
         check("姿態儀:載入 log 後有 ATT 序列", tr is not None and len(tr.t) > 100)
         i = len(tr.t) // 3

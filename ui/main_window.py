@@ -20,12 +20,13 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
                              QWidget)
 
 from core import align as align_mod
-from core import logio, pipeline, sim, sim_tuning, sync
+from core import ekfsrc, logio, pipeline, sim, sim_tuning, sync
 from core import timeline as tl
-from core.types import KIND_GLOBAL, KIND_LABEL
+from core.types import KIND_GLOBAL, KIND_LABEL, KIND_NED
 
 from . import plots, theme
 from .attitude import AttitudeIndicator
+from .ekfsource import EkfSourcePanel
 from .fieldplot import FieldPlot
 # QtWebEngine 必須在 QApplication 建立之前載入:run() 與測試都先 import 本模組
 from .map3d import Map3DWidget, build_scene
@@ -446,6 +447,8 @@ class MainWindow(QMainWindow):
         tv.addWidget(hint)
         tv.addStretch(1)
         self.tabs.addTab(tbl, "統計表")
+        self.p_ekf = EkfSourcePanel()
+        self.tabs.addTab(self.p_ekf, "EKF 來源")
 
         self.txt_report = QTextEdit()
         self.txt_report.setReadOnly(True)
@@ -677,6 +680,7 @@ class MainWindow(QMainWindow):
         self.btn_run.setEnabled(True)
 
         self.p_overview.draw_logdata(logdata, self._display_origin())
+        self.p_ekf.set_logdata(logdata)
         self.p_att.set_logdata(logdata)
         for p in self._result_plots():
             p.show_placeholder()
@@ -809,7 +813,7 @@ class MainWindow(QMainWindow):
             self._refresh_map(self._map_pending[0])
         if w is self.p_tune:
             self._run_tuning()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel)):
             w.set_time(self.playback.time())
 
     def _field_plot_visible(self) -> bool:
@@ -817,7 +821,7 @@ class MainWindow(QMainWindow):
 
     def _on_time(self, t: float):
         w = self.tabs.currentWidget()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel)):
             w.set_time(t)
         if self._field_plot_visible():
             self.fplot.set_time(t)
@@ -1006,9 +1010,32 @@ class MainWindow(QMainWindow):
         self.tile_dist_ref.set_label(self._DIST_LABEL_REF)
         self.tile_dist_est.set_label(self._DIST_LABEL_EST)
 
+    def _update_ekf_source(self, res):
+        """EKF 來源分頁的洩漏係數:參考 = GPS(經緯度)、估測 = VIO(局部 NED)才算得出來。"""
+        ld = self.logdata
+
+        def is_ekf(n: str) -> bool:
+            return n in ("POS", "AHR2") or n.startswith(("XKF", "XKQ"))
+
+        ref, est = ld.sources[res.ref_name], ld.sources[res.est_name]
+        if (est.kind != KIND_NED or is_ekf(res.est_name)
+                or ref.kind != KIND_GLOBAL or is_ekf(res.ref_name)):
+            self.p_ekf.set_leak(None, "洩漏係數需要:參考 = GPS(經緯度)、估測 = VIO(局部 NED,例如 VISP)。"
+                                      "請在左側「選擇比較的兩條軌跡」選好。")
+            return
+        try:
+            lr = ekfsrc.leak_analysis(ld, res.est_name, res.ref_name, ekfsrc.pick_ekf_source(ld),
+                                      t0=res.cfg.get("t0"), t1=res.cfg.get("t1"),
+                                      max_gap_s=res.cfg.get("max_gap_s", 0.5))
+        except ValueError as e:
+            self.p_ekf.set_leak(None, f"無法計算洩漏係數:{e}")
+            return
+        self.p_ekf.set_leak(lr)
+
     def _invalidate_result(self, msg: str):
         """目前設定算不出結果:清掉所有舊結果(不能讓舊區間的數字看起來像新區間的)。"""
         self.result = None
+        self.p_ekf.set_leak(None, f"無法計算 ATE:{msg}")
         self._clear_result_tiles()
         self.table.clear_values()
         self.lbl_align_info.setText("")
@@ -1060,6 +1087,7 @@ class MainWindow(QMainWindow):
         self.lbl_origin.setText(f"ENU 原點:{res.origin_desc}" if res.origin_desc else "")
 
         self.table.set_stats(s)
+        self._update_ekf_source(res)
         self.txt_report.setPlainText(pipeline.format_report(res, self.logdata))
         for p in self._result_plots():
             p.render(res, self.logdata)
