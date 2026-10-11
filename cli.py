@@ -7,6 +7,7 @@
   python main.py --cli ate --sim --align sim3
   python main.py --cli info --sim-multi                   # 多航段模擬(開機到關機一份 log)
   python main.py --cli ekfsrc <log.bin>                   # EKF 來源檢查:有沒有偷參考 GPS
+  python main.py --cli crash <log.bin>                    # 失事 / 失效原因分析
   python main.py --cli tune <log.bin> --segment 1         # PID 調參建議
   python main.py --cli tune --scenario p_high --slow      # PID 調參模擬情境(10 Hz 記錄)
 """
@@ -121,6 +122,11 @@ def main(argv=None) -> int:
     pe.add_argument("--ekf", help="EKF 輸出來源名稱(預設 POS,其次 XKF1)")
     pe.add_argument("--report", help="把文字報告寫到檔案")
 
+    pc = sub.add_parser("crash", help="失事 / 失效原因分析:終點判定、假說排名、時間軸、建議")
+    _add_source_args(pc)
+    pc.add_argument("--report", help="把文字報告寫到檔案")
+    pc.add_argument("--json", help="把完整結果(含全部偵測結果)寫成 JSON")
+
     pt = sub.add_parser("tune", help="PID 調參建議(追蹤誤差、震盪 → 參數調整方向)")
     _add_source_args(pt)
     pt.add_argument("--scenario", choices=list(sim_tuning.SCENARIOS),
@@ -150,6 +156,8 @@ def main(argv=None) -> int:
         return _tune(args, logdata)
     if args.cmd == "ekfsrc":
         return _ekfsrc(args, logdata)
+    if args.cmd == "crash":
+        return _crash(args, logdata)
 
     for which, name in (("--ref", args.ref), ("--est", args.est)):
         if name not in logdata.sources:
@@ -198,6 +206,23 @@ def main(argv=None) -> int:
         with open(args.report, "w", encoding="utf-8") as f:
             f.write(pipeline.format_report(res, logdata))
         print(f"已寫出 {args.report}")
+    return 0
+
+
+def _crash(args, logdata) -> int:
+    from core.crash import engine
+    rep = engine.analyze(logdata)
+    text = rep.format_text()
+    print(text)
+    if args.report:
+        with open(args.report, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"\n已寫出 {args.report}")
+    if args.json:
+        import json
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(rep.to_dict(), f, ensure_ascii=False, indent=1, default=float)
+        print(f"已寫出 {args.json}")
     return 0
 
 

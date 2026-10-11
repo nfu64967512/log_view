@@ -26,6 +26,7 @@ from core.types import KIND_GLOBAL, KIND_LABEL, KIND_NED
 
 from . import plots, theme
 from .attitude import AttitudeIndicator
+from .crash import CrashPanel
 from .ekfsource import EkfSourcePanel
 from .fieldplot import FieldPlot
 # QtWebEngine 必須在 QApplication 建立之前載入:run() 與測試都先 import 本模組
@@ -45,6 +46,12 @@ class _LoadSignals(QObject):
     """背景載入執行緒 → GUI。從 Python 執行緒 emit 會自動排進主執行緒的事件迴圈。"""
     progress = pyqtSignal(int, int)      # (載入世代, 百分比)
     done = pyqtSignal(int, object)
+    failed = pyqtSignal(int, str)
+
+
+class _CrashSignals(QObject):
+    """失事原因分析(背景執行緒)→ GUI。"""
+    done = pyqtSignal(int, object)        # (世代, CrashReport)
     failed = pyqtSignal(int, str)
 
 
@@ -95,6 +102,12 @@ class MainWindow(QMainWindow):
         self._tune_timer.setSingleShot(True)
         self._tune_timer.setInterval(400)
         self._tune_timer.timeout.connect(self._run_tuning)
+        # 失事原因分析:同樣分頁顯示時才算、背景執行緒;同一份 log 不重算
+        self._crash_gen = 0
+        self._crash_key = None
+        self._crash_sig = _CrashSignals(self)
+        self._crash_sig.done.connect(self._on_crash_done)
+        self._crash_sig.failed.connect(self._on_crash_failed)
         # 數值欄位改動後稍等再重算:打字 / 按住方向鍵不會每一下都整套重算
         self._recalc = QTimer(self)
         self._recalc.setSingleShot(True)
@@ -422,6 +435,11 @@ class MainWindow(QMainWindow):
         self.p_tune.analyzeRequested.connect(lambda: self._run_tuning(force=True))
         self.p_tune.set_report(None, message="載入 log 後,在這裡分析 Roll / Pitch / Yaw 的追蹤與震盪,給 PID 調整方向")
         self.tabs.addTab(self.p_tune, "PID 調參")
+        self.p_crash = CrashPanel()
+        self.p_crash.seekRequested.connect(self._seek)
+        self.p_crash.analyzeRequested.connect(lambda: self._run_crash(force=True))
+        self.p_crash.set_report(None, message="載入 log 後,切到這個分頁分析失事 / 失效原因")
+        self.tabs.addTab(self.p_crash, "失事分析")
         self.tabs.addTab(self.p_overview, "資料總覽")
         self.tabs.addTab(self.p_play, "軌跡播放")
         self.tabs.addTab(self.p_top, "平面軌跡")
@@ -624,6 +642,11 @@ class MainWindow(QMainWindow):
         self._tune_key = None
         self.p_tune.set_busy(False)
         self.p_tune.set_report(None, message="切到這個分頁時開始分析")
+        self._crash_gen += 1                   # 舊 log 的失事分析作廢
+        self._crash_key = None
+        self.p_crash.set_busy(False)
+        self.p_crash.set_logdata(logdata)
+        self.p_crash.set_report(None, message="切到這個分頁時開始分析失事 / 失效原因")
         self.logdata = logdata
         self.result = None
         self._play_res = None
@@ -820,7 +843,9 @@ class MainWindow(QMainWindow):
             self._refresh_map(self._map_pending[0])
         if w is self.p_tune:
             self._run_tuning()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel)):
+        if w is self.p_crash:
+            self._run_crash()
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel, CrashPanel)):
             w.set_time(self.playback.time())
 
     def _field_plot_visible(self) -> bool:
@@ -828,7 +853,7 @@ class MainWindow(QMainWindow):
 
     def _on_time(self, t: float):
         w = self.tabs.currentWidget()
-        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel)):
+        if isinstance(w, (plots.PlotWidget, Map3DWidget, TuningPanel, EkfSourcePanel, CrashPanel)):
             w.set_time(t)
         if self._field_plot_visible():
             self.fplot.set_time(t)
@@ -891,6 +916,46 @@ class MainWindow(QMainWindow):
         parts = [f"{lbl} {n} 項" for lbl, n in counts if n]
         self.statusBar().showMessage(
             f"PID 調參分析({scope}):" + ("、".join(parts) if parts else "沒有明顯問題"), 8000)
+
+    def _run_crash(self, force: bool = False):
+        """失事原因分析(背景執行緒;同一份 log 不重算,「重新分析」強制重算)。"""
+        if self.logdata is None:
+            self.p_crash.set_report(None, message="載入 log 後,在這裡分析失事 / 失效原因")
+            return
+        key = id(self.logdata)
+        if key == self._crash_key and not force:
+            return
+        self._crash_key = key
+        self._crash_gen += 1
+        gen, ld, sig = self._crash_gen, self.logdata, self._crash_sig
+        self.p_crash.set_busy(True)
+
+        def run():
+            try:
+                from core.crash import engine
+                rep = engine.analyze(ld)
+            except Exception as e:  # noqa: BLE001
+                sig.failed.emit(gen, f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}")
+                return
+            sig.done.emit(gen, rep)
+
+        threading.Thread(target=run, name="crash", daemon=True).start()
+
+    def _on_crash_done(self, gen: int, rep):
+        if gen != self._crash_gen or self.logdata is None:
+            return
+        self.p_crash.set_busy(False)
+        self.p_crash.set_report(rep)
+        self.p_crash.set_time(self.playback.time())
+        self.statusBar().showMessage("失事分析:" + (rep.verdict_note or rep.summary_zh)[:80], 8000)
+
+    def _on_crash_failed(self, gen: int, msg: str):
+        if gen != self._crash_gen:
+            return
+        self.p_crash.set_busy(False)
+        self._crash_key = None
+        self.p_crash.set_report(None, message=f"分析失敗:{msg.splitlines()[0]}")
+        print(msg)
 
     def _on_tune_failed(self, gen: int, msg: str):
         if gen != self._tune_gen:

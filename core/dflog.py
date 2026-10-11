@@ -126,7 +126,7 @@ _ERR_CODES: dict[str, dict[int, str]] = {
 
 # AP_Arming::Method(ARM.Method;只列確定的幾個)
 ARM_METHODS: dict[int, str] = {0: "方向舵", 1: "MAVLink", 2: "AUX 開關", 3: "馬達測試",
-                               4: "Lua 腳本", 13: "落地後自動", 17: "閒置自動"}
+                               4: "Lua 腳本", 12: "墜機偵測(CRASH_CHECK)", 13: "落地後自動", 17: "閒置自動"}
 
 
 def err_text(subsys: int, ecode: int) -> str:

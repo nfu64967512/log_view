@@ -62,7 +62,7 @@ def main() -> int:
     print("[視窗建立]")
     check("主視窗顯示", w.isVisible())
     check("計算鈕在無資料時停用", not w.btn_run.isEnabled())
-    check("分頁數 = 13(含 EKF 來源)", w.tabs.count() == 13, f"(實得 {w.tabs.count()})")
+    check("分頁數 = 14(含 EKF 來源、失事分析)", w.tabs.count() == 14, f"(實得 {w.tabs.count()})")
     check("第二個分頁是 PID 調參", w.tabs.tabText(1) == "PID 調參")
     check("第一個分頁是 3D 地圖", w.tabs.tabText(0) == "3D 地圖")
     check("左側四個分頁", [w.side.tabText(i) for i in range(w.side.count())]
