@@ -92,6 +92,8 @@ def main() -> int:
         rmse = w.result.stats["3d"]["rmse"]
         check("RMSE 落在合理範圍", 0.5 < rmse < 2.0, f"(3D RMSE {rmse:.3f} m)")
         check("統計磚已填值", w.tile_3d.value.text() != "—", f"({w.tile_3d.value.text()})")
+        check("檔案標籤含記錄時間(GPS 週 / 毫秒換算)", "記錄時間:" in w.lbl_file.text()
+              and "~" in w.lbl_file.text(), f"({w.lbl_file.text()[:90]})")
         pe = w.p_ekf
         sets_txt = " ".join(pe.tbl_sets.item(r, c).text() for r in range(pe.tbl_sets.rowCount())
                             for c in range(pe.tbl_sets.columnCount()) if pe.tbl_sets.item(r, c))

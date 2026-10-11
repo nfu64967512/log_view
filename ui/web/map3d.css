@@ -45,6 +45,7 @@ html, body {
 #hud { top: 10px; left: 10px; min-width: 250px; }
 #hud .time { color: var(--ink); font-family: var(--mono); font-size: 19px; line-height: 1.25; }
 #hud .time .rel { color: var(--muted); font-size: 11.5px; margin-left: 6px; font-family: var(--font); }
+#hud .wall { color: var(--muted); font-family: var(--mono); font-size: 11.5px; margin-top: -2px; }
 #hud .state { margin: 3px 0 6px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 #hud .tag {
   border-radius: 4px; padding: 0 6px; font-size: 11.5px; line-height: 18px;

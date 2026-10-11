@@ -144,6 +144,8 @@ def test_scene():
     check("姿態來源 = ATT(模擬附 LogIndex)" if ld.index is not None else "姿態來源 = 推估",
           sc["attitude"] == ("ATT" if ld.index is not None else "derived"), f"({sc['attitude']})")
     check("姿態序列長度一致", len(att["t"]) == len(att["roll"]) == len(att["pitch"]) == len(att["yaw"]))
+    check("場景含 log 真實時間(wall0,UTC unix 秒)",
+          isinstance(sc.get("wall0"), float) and 1.5e9 < sc["wall0"] < 2.5e9, f"({sc.get('wall0')})")
     ms = sc.get("mission")
     check("場景含預定航點(CMD)", ms is not None and ms["source"] == "CMD" and len(ms["wps"]) >= 4
           and all({"n", "lat", "lng", "u"} <= set(wp) for wp in ms["wps"]), f"({ms and len(ms['wps'])} 個)")
@@ -862,6 +864,8 @@ def visual(out_dir: str):
     _shot(w, out_dir, "01d_wp_target")
     check("HUD 顯示目標航點(推估)", "目標航點" in hud_auto and "WP " in hud_auto and " m" in hud_auto,
           f"({hud_auto.replace(chr(10), ' | ')[-70:]})")
+    check("HUD 顯示真實日期時間(YYYY-MM-DD hh:mm:ss)",
+          bool(__import__("re").search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", hud_auto)), f"({hud_auto[:60]!r})")
     w.set_time(f1[0] + 1.0)                        # 剛解鎖、還沒進 AUTO:不顯示
     _pump(300)
     hud_idle = _js(w, "document.getElementById('hud').innerText") or ""

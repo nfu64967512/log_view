@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QInputDialog, QL
                              QLineEdit, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
 
 from core import align as align_mod
-from core import frames, pipeline
+from core import clock, frames, pipeline
 from core import mission as mission_mod
 from core.timeline import horizontal_speed, mode_changes
 from core.types import EV_RESET
@@ -257,6 +257,11 @@ def _short_align(info: dict) -> str:
     return head or label
 
 
+def _wall0(logdata, tb: float) -> float | None:
+    wc = clock.wall_clock(logdata)
+    return None if wc is None else round(wc.unix_at(tb), 3)
+
+
 def _mission(logdata, origin, ref_t, ref_enu, modes, tb) -> dict | None:
     """預定任務航點(log 的 CMD)→ 場景資料;沒有帶位置的航點回傳 None。"""
     wps = mission_mod.load_mission(logdata)
@@ -363,6 +368,7 @@ def build_scene(logdata, ref_name: str, est_name: str, res=None) -> dict | None:
         "version": 1,
         "origin": [round(origin[0], 9), round(origin[1], 9), round(origin[2], 3)],
         "t_base": tb,
+        "wall0": _wall0(logdata, tb),     # rel = 0 的 UTC unix 秒(HUD 顯示真實時刻);沒有 GPS 時間為 None
         "t_span": round(float(getattr(logdata, "t_last", logdata.t_end)) - tb, 3),   # 時間軸長度
         "ground": 0.0,
         "vehicle": vehicle,

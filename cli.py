@@ -16,7 +16,7 @@ import argparse
 import sys
 
 from core import align as align_mod
-from core import ekfsrc, logio, pipeline, sim, sim_tuning, sync, timeline
+from core import clock, ekfsrc, logio, pipeline, sim, sim_tuning, sync, timeline
 from core.types import EV_RESET, KIND_LABEL
 
 _MAX_MODE_LINES = 40
@@ -38,6 +38,11 @@ def _load(args):
 
 def _print_sources(logdata):
     print(f"資料來源:{logdata.path or '(模擬)'}")
+    wc = clock.wall_clock(logdata)
+    if wc is not None:
+        a, b = wc.local_at(logdata.t_base), wc.local_at(logdata.t_last)
+        print(f"記錄時間:{clock.format_local(a)} ~ {clock.format_local(b, a.date() != b.date())}"
+              f"(本機時區 {a.strftime('%Z') or a.strftime('%z')})")
     print(f"時長 {logdata.duration:.1f} s"
           + (f",ENU 原點 {logdata.origin_desc}" if logdata.origin_desc else ""))
     print(f"{'名稱':<18}{'座標框':<12}{'樣本':>8}{'速率':>9}")

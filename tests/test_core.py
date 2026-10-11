@@ -10,7 +10,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import align, ekfsrc, fakebin, frames, logio, metrics, mission, pipeline, sim, sync, timeline  # noqa: E402
+from core import align, clock, dflog, ekfsrc, fakebin, frames, logio, metrics, mission, pipeline, sim, sync, timeline  # noqa: E402
 from core.types import EV_ARM, EV_DISARM, EV_MODE, EV_RESET, LogData, LogEvent  # noqa: E402
 
 
@@ -515,6 +515,93 @@ def test_ekf_leak_analysis_on_sim():
     txt = ekfsrc.format_report(logdata, info, rg)
     assert "來源組設定" in txt and "洩漏係數" in txt
     print(f"  EKF=VIO α={rv.overall:+.3f}、EKF=GPS α={rg.overall:.3f};報告含設定表與洩漏係數")
+
+
+def test_wall_clock():
+    """GPS 週 / 毫秒 → UTC:閏秒表、跨 2017-01-01 閏秒、由 log 求真實時間(無 GPS 時間 → None)。"""
+    from datetime import datetime, timezone
+
+    def utc(*a):
+        return datetime(*a, tzinfo=timezone.utc).timestamp()
+
+    # 已知對照:2020-01-01 00:00:00 UTC(週三)= GPS 週 2086、週內 3 天 + 18 秒 = 259218 s
+    assert abs(clock.gps_to_utc_unix(2086, 259218 * 1000) - utc(2020, 1, 1)) < 1e-6
+    assert clock.gps_minus_utc(utc(2020, 1, 1)) == 18 and clock.gps_minus_utc(utc(2016, 6, 1)) == 17
+    assert clock.gps_minus_utc(utc(1981, 6, 30)) == 0 and clock.gps_minus_utc(utc(1981, 7, 1)) == 1
+    # 同一個 GPS 時刻在閏秒前 / 後換算出不同的 UTC 偏移
+    g0 = clock.GPS_EPOCH_UNIX + 1900 * 604800          # 2016-06-12 附近(閏秒數 17)
+    assert abs((g0 - clock.gps_to_utc_unix(1900, 0)) - 17) < 1e-6
+    g1 = clock.GPS_EPOCH_UNIX + 2100 * 604800          # 2020-03 附近(閏秒數 18)
+    assert abs((g1 - clock.gps_to_utc_unix(2100, 0)) - 18) < 1e-6
+
+    logdata = sim.make_sim_logdata()
+    wc = clock.wall_clock(logdata)
+    assert wc is not None
+    g = logdata.index.series("GPS.GMS")
+    wk = logdata.index.series("GPS.GWk")[1]
+    for i in (0, len(g[0]) // 2, len(g[0]) - 1):       # 任一 GPS 樣本:wall(t) = 該樣本的 GPS 時間換算
+        want = clock.gps_to_utc_unix(wk[i], g[1][i])
+        assert abs(wc.unix_at(g[0][i]) - want) < 0.01, (i, wc.unix_at(g[0][i]) - want)
+    assert wc.utc_at(logdata.t_base).tzinfo is not None and wc.local_at(logdata.t_base).tzinfo is not None
+    assert clock.format_local(wc.local_at(logdata.t_base)).count(":") == 2
+
+    class _NoIdx:
+        index = None
+    assert clock.wall_clock(_NoIdx()) is None
+    t = np.arange(10.0)                                 # 有 GPS 但沒有 3D 定位 → 不可信
+    bad = dflog.LogIndex.from_tables({"GPS": {"t": t, "Status": np.full(10, 2, np.uint8),
+                                              "GWk": np.full(10, 2300, np.uint16),
+                                              "GMS": (t * 1000 + 1000).astype(np.uint32),
+                                              "Lat": np.zeros(10), "Lng": np.zeros(10), "Alt": np.zeros(10)}})
+    class _L:
+        index = bad
+    assert clock.wall_clock(_L()) is None
+    print(f"  GPS 週 / 毫秒換算與閏秒表正確;模擬 log 起點 {clock.format_local(wc.utc_at(logdata.t_base))} UTC")
+
+
+def test_stat_armed_fallback():
+    """ARM、EV 都沒有時用 STAT.Armed 推 ARM / DISARM;有 ARM 或 EV 時不用 STAT。"""
+    from core.types import EV_ARM, EV_DISARM
+    t = np.arange(0, 60.0, 1.0)
+    gps = {"t": t, "Status": np.full(t.size, 3, np.uint8), "Lat": 23.7 + 1e-6 * t, "Lng": 120.4 + 0 * t,
+           "Alt": np.full(t.size, 30.0), "GWk": np.full(t.size, 2300, np.uint16),
+           "GMS": (t * 1000 + 1000).astype(np.uint32)}
+    armed = ((t >= 10) & (t < 30)) | (t >= 45)         # 10 s 解鎖、30 s 上鎖、45 s 再解鎖(之後沒上鎖)
+    stat = {"t": t, "Armed": armed.astype(np.uint8), "isFlying": np.zeros(t.size, np.uint8)}
+    ld = logio.logdata_from_index(dflog.LogIndex.from_tables({"GPS": gps, "STAT": stat}))
+    arm = [(round(e.t), e.kind) for e in ld.events if e.kind in (EV_ARM, EV_DISARM)]
+    assert arm == [(10, EV_ARM), (30, EV_DISARM), (45, EV_ARM)], arm
+    # 開頭就已解鎖 → 第一筆算 ARM
+    stat2 = dict(stat, Armed=np.ones(t.size, np.uint8))
+    ld2 = logio.logdata_from_index(dflog.LogIndex.from_tables({"GPS": gps, "STAT": stat2}))
+    assert [(round(e.t), e.kind) for e in ld2.events if e.kind in (EV_ARM, EV_DISARM)] == [(0, EV_ARM)]
+    # 有 EV 10/11 時以 EV 為準(STAT 不參與)
+    ev = {"t": np.array([12.0, 28.0]), "Id": np.array([10, 11], np.uint8)}
+    ld3 = logio.logdata_from_index(dflog.LogIndex.from_tables({"GPS": gps, "STAT": stat, "EV": ev}))
+    assert [(round(e.t), e.kind) for e in ld3.events if e.kind in (EV_ARM, EV_DISARM)] == [(12, EV_ARM), (28, EV_DISARM)]
+    ld4 = logio.logdata_from_index(dflog.LogIndex.from_tables({"GPS": gps}))
+    assert not [e for e in ld4.events if e.kind in (EV_ARM, EV_DISARM)]
+    print("  STAT.Armed → ARM / DISARM [10 s, 30 s, 45 s];已解鎖開頭、EV 優先、無紀錄皆正確")
+
+
+def test_mission_int_latlng():
+    """CMD 經緯度存成 1e7 倍整數時要還原成度。"""
+    n = 4
+    cmd = {"t": 3.0 + 0.001 * np.arange(n), "CTot": np.full(n, n, np.uint16), "CNum": np.arange(n, dtype=np.uint16),
+           "CId": np.full(n, 16, np.uint16), "Lat": np.array([0, 237020000, 237020500, 237021000], np.int64),
+           "Lng": np.array([0, 1204310000, 1204310500, 1204311000], np.int64),
+           "Alt": np.full(n, 20.0), "Frame": np.full(n, 3, np.uint8)}
+    class _L:
+        index = dflog.LogIndex.from_tables({"CMD": cmd})
+    w = mission.load_mission(_L())
+    assert [x.n for x in w] == [1, 2, 3]
+    assert abs(w[0].lat - 23.702) < 1e-9 and abs(w[0].lng - 120.431) < 1e-9, (w[0].lat, w[0].lng)
+    cmd2 = dict(cmd, Lat=cmd["Lat"] * 1e-7, Lng=cmd["Lng"] * 1e-7)          # 本來就是度:不縮放
+    class _L2:
+        index = dflog.LogIndex.from_tables({"CMD": cmd2})
+    w2 = mission.load_mission(_L2())
+    assert abs(w2[0].lat - 23.702) < 1e-9 and abs(w2[2].lng - 120.4311) < 1e-9
+    print("  整數 1e7 倍經緯度還原成度;原本是度的不再縮放")
 
 
 def test_bin_roundtrip():

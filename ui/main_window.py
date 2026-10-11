@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
                              QWidget)
 
 from core import align as align_mod
-from core import ekfsrc, logio, pipeline, sim, sim_tuning, sync
+from core import clock, ekfsrc, logio, pipeline, sim, sim_tuning, sync
 from core import timeline as tl
 from core.types import KIND_GLOBAL, KIND_LABEL, KIND_NED
 
@@ -669,10 +669,17 @@ class MainWindow(QMainWindow):
             seg_txt = (f"<br>{len(self._segments)} 個 ARM 飛行段"
                        + (" — 可在下方時間軸選段" if len(self._segments) > 1 else ""))
         veh = getattr(logdata.index, "vehicle", "") if logdata.index is not None else ""
+        wc = clock.wall_clock(logdata)
+        when = ""
+        if wc is not None:
+            a, b = wc.local_at(logdata.t_base), wc.local_at(logdata.t_last)
+            when = (f"<br>記錄時間:{clock.format_local(a)} ~ "
+                    f"{clock.format_local(b, a.date() != b.date())}(本機時區)")
         self.lbl_file.setText(
             f"<b style='color:{theme.INK}'>{name}</b><br>"
             f"{len(names)} 個位置來源,時長 {dur:.0f} 秒"
             + (f",機型 {veh}" if veh and veh != "unknown" else "")
+            + when
             + (f"<br>原點:{logdata.origin_desc}" if logdata.origin_desc else "")
             + seg_txt)
         self._prev_file_label = self.lbl_file.text()

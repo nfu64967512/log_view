@@ -7,7 +7,7 @@ from datetime import datetime
 import numpy as np
 
 from . import align as align_mod
-from . import metrics, sync, timeline
+from . import clock, metrics, sync, timeline
 from .types import KIND_GLOBAL, KIND_LABEL, KIND_NED, LogData, TrajSource
 
 
@@ -148,6 +148,7 @@ def format_report(res: AteResult, logdata: LogData) -> str:
         "VIO / GPS ATE 分析報告 — vio_ate_studio",
         f"產生時間:{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"資料來源:{logdata.path}",
+        *_clock_lines(logdata),
         "",
         f"參考(基準):{res.ref_name}({KIND_LABEL[ref.kind]},{ref.n} 筆,≈{ref.rate_hz:.1f} Hz)",
         f"估測:{res.est_name}({KIND_LABEL[est.kind]},{est.n} 筆,≈{est.rate_hz:.1f} Hz)",
@@ -181,6 +182,16 @@ def format_report(res: AteResult, logdata: LogData) -> str:
         "ATE = 時間同步(+空間對齊)後成對位置差的統計;3D 為誤差向量長度,水平只取東北分量。",
     ]
     return "\n".join(lines)
+
+
+def _clock_lines(logdata: LogData) -> list[str]:
+    """log 的真實時間(GPS 週 / 毫秒推得;本機時區);沒有 GPS 時間就不輸出。"""
+    wc = clock.wall_clock(logdata)
+    if wc is None:
+        return []
+    a, b = wc.local_at(logdata.t_base), wc.local_at(logdata.t_last)
+    return [f"記錄時間:{clock.format_local(a)} ~ {clock.format_local(b, a.date() != b.date())}"
+            f"(本機時區 {a.strftime('%Z') or a.strftime('%z')},由 GPS 週 / 毫秒換算)"]
 
 
 def _ratio_text(res: AteResult) -> str:

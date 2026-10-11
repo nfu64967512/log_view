@@ -986,6 +986,12 @@ function renderHud(rel, r, a) {
   const arm = armAt(rel);
   const mode = modeAt(rel);
   let h = `<div class="time">${fmtClock(rel)}<span class="rel">(${rel.toFixed(1)} s)</span></div>`;
+  const w0 = S.scene.wall0;                                  // 真實時刻(本機時區,GPS 週 / 毫秒換算)
+  if (w0 !== null && w0 !== undefined) {
+    const d = new Date((w0 + rel) * 1000), p2 = (n) => String(n).padStart(2, "0");
+    h += `<div class="wall">${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ` +
+         `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}</div>`;
+  }
   h += `<div class="state">`;
   h += arm ? `<span class="tag armed">${esc(arm)}</span>` : `<span class="tag">地面(未 ARM)</span>`;
   if (mode) h += `<span class="chip" style="background:${mode.color}"></span><span class="mode-name">${esc(mode.name)}</span>`;

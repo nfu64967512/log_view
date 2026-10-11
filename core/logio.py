@@ -33,6 +33,7 @@ CANDIDATE_TYPES = ["GPS", "GPS2", "GPSB", "POS", "VISP", "XKF1", "NKF1", "AHR2",
 # 時間軸事件
 #   ARM   解鎖狀態 ArmState(新韌體;與 EV 重複記錄時以 ARM 為準)
 #   EV    事件 Id 10 = ARMED、11 = DISARMED(舊韌體只有這個);其他 Id → EV_EVENT
+#   STAT  Armed 欄位(ARM、EV 都沒有時的備援;只在 index 路徑,pymavlink 退路不讀)
 #   MODE  飛行模式;名稱依 MSG / VER 判斷出的機種查表
 #   ERR   子系統錯誤 / 失效保護 → EV_ERROR
 EVENT_TYPES = ["ARM", "EV", "MODE"]
@@ -100,6 +101,24 @@ def _timed(index: LogIndex, name: str, present: set[str]) -> dict[str, np.ndarra
     if name not in present or index.time_field(name) != "TimeUS":
         return None
     return index.raw_table(name)
+
+
+def _stat_arm_events(index: LogIndex, present: set[str]) -> list[LogEvent]:
+    """STAT.Armed 的狀態變化 → ARM / DISARM 事件(開頭就是已解鎖時,第一筆算 ARM)。"""
+    tbl = _timed(index, "STAT", present)
+    if tbl is None or "Armed" not in tbl:
+        return []
+    st, ok = _ints(tbl["Armed"])
+    out: list[LogEvent] = []
+    prev = 0
+    for t, s, g in zip(tbl["t"].tolist(), st.tolist(), ok.tolist()):
+        if not g:
+            continue
+        cur = 1 if s else 0
+        if cur != prev:
+            out.append(LogEvent(t, EV_ARM if cur else EV_DISARM))
+            prev = cur
+    return out
 
 
 def index_events(index: LogIndex) -> list[LogEvent]:
@@ -285,8 +304,9 @@ def logdata_from_index(index: LogIndex, path: str = "") -> LogData:
     if tbl is not None:
         mode_evs = [LogEvent(t, EV_MODE, lb) for t, lb in zip(tbl["t"].tolist(), index.mode_labels(tbl))]
     reset_hits.sort(key=lambda h: h[0])     # 檔案順序(同時刻的重置依出現先後)
-    # ARM 與 EV 常同時記錄同一次解鎖:有 ARM 訊息就只用 ARM,避免重複計算
-    events = (arm_evs or ev_evs) + mode_evs
+    # ARM 與 EV 常同時記錄同一次解鎖:有 ARM 訊息就只用 ARM,避免重複計算;
+    # 兩者都沒有(新韌體關掉了 ARM / EV 紀錄)才退回 STAT.Armed
+    events = (arm_evs or ev_evs or _stat_arm_events(index, present)) + mode_evs
     events += [LogEvent(t, EV_RESET, key_label[key]) for _, t, key in reset_hits if key in key_label]
     events += index_events(index)
     events.sort(key=lambda e: e.t)

@@ -63,8 +63,11 @@ def load_mission(logdata) -> list[Waypoint]:
             continue
         i = last[n]
         cid = int(tbl["CId"][i])
+        lat, lng = float(tbl["Lat"][i]), float(tbl["Lng"][i])
+        if abs(lat) > 90 or abs(lng) > 180:        # 少數格式把經緯度存成 1e7 倍整數(度 × 1e7)
+            lat, lng = lat * 1e-7, lng * 1e-7
         w = Waypoint(n=n, cmd=cid, name=NAV_NAMES.get(cid, f"CMD {cid}"),
-                     lat=float(tbl["Lat"][i]), lng=float(tbl["Lng"][i]), alt=float(tbl["Alt"][i]),
+                     lat=lat, lng=lng, alt=float(tbl["Alt"][i]),
                      frame=int(tbl["Frame"][i]) if "Frame" in tbl else 3, t=float(tbl["t"][i]))
         if cid in NAV_NAMES and w.has_position:
             out.append(w)
